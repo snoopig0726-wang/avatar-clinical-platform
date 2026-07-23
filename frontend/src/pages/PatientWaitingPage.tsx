@@ -240,6 +240,7 @@ export function PatientWaitingPage() {
               每个病例终身最多提交 3 次。内容通过安全校验后仍需医生审核，不会直接进入图像模型。
             </p>
             <Input.TextArea
+              aria-label="外观调整建议"
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}
               placeholder="例如：希望表情更平静、背景更柔和"

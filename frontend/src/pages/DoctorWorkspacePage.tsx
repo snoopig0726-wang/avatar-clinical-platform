@@ -189,6 +189,7 @@ export function DoctorWorkspacePage() {
       {
         title: '当前阶段',
         dataIndex: 'status',
+        responsive: ['md'],
         render: (value: ClinicalCase['status'], record) => (
           <div className="stage-cell">
             <strong>{statusMeta[value].stage}</strong>
@@ -204,6 +205,7 @@ export function DoctorWorkspacePage() {
         title: '最近更新',
         dataIndex: 'updated_at',
         width: 130,
+        responsive: ['md'],
         render: (value: string) => <span className="muted-cell">{relativeTime(value)}</span>,
       },
       {

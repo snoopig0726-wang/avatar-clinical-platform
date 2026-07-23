@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import struct
+import time
 import zlib
 from dataclasses import dataclass
 from typing import Protocol
@@ -59,8 +60,24 @@ def _mock_portrait_png() -> bytes:
 
 
 class MockImageGenerationProvider:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.scenario = settings.mock_image_scenario if settings else "success"
+        self.delay_seconds = settings.mock_image_delay_seconds if settings else 0
+
     def generate(self, prompt: str) -> GeneratedImage:
         del prompt
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        if self.scenario == "temporary_failure":
+            raise ImageGenerationError("PROVIDER_TEMPORARY_FAILURE", retryable=True)
+        if self.scenario == "moderation_blocked":
+            raise ImageGenerationError("PROVIDER_MODERATION_BLOCKED")
+        if self.scenario == "invalid_image":
+            return GeneratedImage(
+                content=b"mock-invalid-image",
+                mime_type="image/png",
+                provider_request_id="mock-invalid",
+            )
         return GeneratedImage(
             content=_mock_portrait_png(),
             mime_type="image/png",
@@ -115,8 +132,7 @@ class OpenAIImageGenerationProvider:
 
 def get_image_generation_provider(settings: Settings) -> ImageGenerationProvider:
     if settings.model_provider == "mock":
-        return MockImageGenerationProvider()
+        return MockImageGenerationProvider(settings)
     if settings.model_provider == "openai":
         return OpenAIImageGenerationProvider(settings)
     raise ImageGenerationError("MODEL_PROVIDER_UNSUPPORTED")
-

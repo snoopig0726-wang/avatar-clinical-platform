@@ -29,6 +29,7 @@
 ### 测试与验收
 
 - [`quality/TEST.md`](quality/TEST.md)：P0/P1/P2 测试矩阵、黑盒安全用例、证据要求和上线闸门。
+- [`quality/DEMO-ACCEPTANCE.md`](quality/DEMO-ACCEPTANCE.md)：当前演示范围、自动化证据、已知外部依赖和演示前检查清单。
 
 ### 决策记录
 

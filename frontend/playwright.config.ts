@@ -20,5 +20,12 @@ export default defineConfig({
         channel: process.env.CI ? undefined : 'msedge',
       },
     },
+    {
+      name: 'mobile',
+      use: {
+        ...devices['Pixel 5'],
+        channel: process.env.CI ? undefined : 'msedge',
+      },
+    },
   ],
 })

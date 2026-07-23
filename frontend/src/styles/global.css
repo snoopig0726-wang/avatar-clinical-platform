@@ -2564,7 +2564,18 @@ a {
   }
 
   .cases-card .ant-table {
-    min-width: 720px;
+    min-width: 0;
+  }
+
+  .cases-card .case-id-cell {
+    min-width: 0;
+  }
+
+  .cases-card .case-id-cell strong {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .floating-create {

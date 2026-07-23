@@ -216,6 +216,7 @@ export function DoctorInterviewPage() {
       return (
         <Form.Item name={questionKey} rules={rules}>
           <Checkbox.Group
+            aria-label={labels[questionKey]}
             options={contract?.enums.emotions.map((value) => ({
               value,
               label: enumLabels[value],
@@ -229,6 +230,7 @@ export function DoctorInterviewPage() {
       return (
         <Form.Item name={questionKey} rules={rules}>
           <Slider
+            aria-label={labels[questionKey]}
             min={1}
             max={5}
             step={1}
@@ -250,6 +252,7 @@ export function DoctorInterviewPage() {
     return (
       <Form.Item name={questionKey} rules={rules}>
         <Select
+          aria-label={labels[questionKey]}
           allowClear={!required}
           placeholder={required ? '请选择' : '未填写'}
           options={values.map((value) => ({ value, label: enumLabels[value] }))}

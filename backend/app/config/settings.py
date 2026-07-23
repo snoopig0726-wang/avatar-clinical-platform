@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,13 @@ class Settings(BaseSettings):
     model_name: str = "gpt-image-2"
     model_api_key: str = ""
     model_timeout_seconds: int = Field(default=180, ge=10, le=300)
+    mock_image_scenario: Literal[
+        "success",
+        "temporary_failure",
+        "moderation_blocked",
+        "invalid_image",
+    ] = "success"
+    mock_image_delay_seconds: float = Field(default=0, ge=0, le=30)
     generation_dispatch_mode: str = "inline"
     storage_provider: str = "local"
     local_image_dir: str = ".local-data/avatar-images"
