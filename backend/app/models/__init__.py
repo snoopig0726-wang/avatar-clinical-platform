@@ -1,0 +1,37 @@
+from app.models.base import Base
+from app.models.entities import (
+    AdjustmentRequest,
+    AuditLog,
+    AvatarVersion,
+    ClinicalCase,
+    EmailVerificationToken,
+    IdempotencyRecord,
+    PatientSession,
+    RetentionJob,
+    RiskRule,
+    SessionAvatarAuthorization,
+    SessionInvite,
+    SoundDescription,
+    StaffAccessSession,
+    StaffUser,
+    VisualFeature,
+)
+
+__all__ = [
+    "AuditLog",
+    "AdjustmentRequest",
+    "AvatarVersion",
+    "Base",
+    "ClinicalCase",
+    "EmailVerificationToken",
+    "IdempotencyRecord",
+    "PatientSession",
+    "RiskRule",
+    "RetentionJob",
+    "SessionInvite",
+    "SessionAvatarAuthorization",
+    "SoundDescription",
+    "StaffAccessSession",
+    "StaffUser",
+    "VisualFeature",
+]

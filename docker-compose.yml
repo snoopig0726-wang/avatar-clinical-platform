@@ -1,0 +1,156 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    environment:
+      APP_ENV: local
+      SECRET_KEY: local-compose-secret-change-before-deploy
+      DATABASE_URL: postgresql+asyncpg://avatar:avatar@postgres:5432/avatar
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      BOOTSTRAP_DEMO_DATA: "true"
+      FRONTEND_ORIGINS: http://localhost:5173
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-mock}
+      MODEL_NAME: gpt-image-2
+      MODEL_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: "180"
+      GENERATION_DISPATCH_MODE: celery
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_BUCKET: avatar-local
+      S3_ACCESS_KEY: local-access-key
+      S3_SECRET_KEY: local-secret-key
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/live', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+    environment:
+      APP_ENV: local
+      SECRET_KEY: local-compose-secret-change-before-deploy
+      DATABASE_URL: postgresql+asyncpg://avatar:avatar@postgres:5432/avatar
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      BOOTSTRAP_DEMO_DATA: "false"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-mock}
+      MODEL_NAME: gpt-image-2
+      MODEL_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: "180"
+      GENERATION_DISPATCH_MODE: celery
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_BUCKET: avatar-local
+      S3_ACCESS_KEY: local-access-key
+      S3_SECRET_KEY: local-secret-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
+    environment:
+      APP_ENV: local
+      SECRET_KEY: local-compose-secret-change-before-deploy
+      DATABASE_URL: postgresql+asyncpg://avatar:avatar@postgres:5432/avatar
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      BOOTSTRAP_DEMO_DATA: "false"
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_BUCKET: avatar-local
+      S3_ACCESS_KEY: local-access-key
+      S3_SECRET_KEY: local-secret-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/frontend.Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: avatar
+      POSTGRES_USER: avatar
+      POSTGRES_PASSWORD: avatar
+    ports:
+      - "5432:5432"
+    volumes:
+      - avatar-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avatar -d avatar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - avatar-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: local-access-key
+      MINIO_ROOT_PASSWORD: local-secret-key
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - avatar-minio:/data
+
+volumes:
+  avatar-postgres:
+  avatar-redis:
+  avatar-minio:
