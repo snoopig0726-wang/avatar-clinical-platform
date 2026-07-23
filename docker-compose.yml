@@ -10,7 +10,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       AUTO_CREATE_TABLES: "false"
       BOOTSTRAP_DEMO_DATA: "true"
-      FRONTEND_ORIGINS: http://localhost:5173
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:5173}
       MODEL_PROVIDER: ${MODEL_PROVIDER:-mock}
       MODEL_NAME: gpt-image-2
       MODEL_API_KEY: ${OPENAI_API_KEY:-}
@@ -20,7 +20,7 @@ services:
       GENERATION_DISPATCH_MODE: celery
       STORAGE_PROVIDER: s3
       S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_BUCKET: avatar-local
       S3_ACCESS_KEY: local-access-key
       S3_SECRET_KEY: local-secret-key
@@ -65,7 +65,7 @@ services:
       GENERATION_DISPATCH_MODE: celery
       STORAGE_PROVIDER: s3
       S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_BUCKET: avatar-local
       S3_ACCESS_KEY: local-access-key
       S3_SECRET_KEY: local-secret-key
@@ -91,7 +91,7 @@ services:
       BOOTSTRAP_DEMO_DATA: "false"
       STORAGE_PROVIDER: s3
       S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_BUCKET: avatar-local
       S3_ACCESS_KEY: local-access-key
       S3_SECRET_KEY: local-secret-key

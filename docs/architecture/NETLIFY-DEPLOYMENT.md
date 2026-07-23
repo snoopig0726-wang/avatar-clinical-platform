@@ -33,6 +33,51 @@ VITE_API_BASE_URL=https://api.example.com/api
 
 该地址必须是公开 HTTPS 地址，末尾保留 `/api`，不要填写 OpenAI Key。
 
+## 零费用临时演示方案
+
+短期演示可以使用 Netlify Free + Cloudflare Quick Tunnel，让 Netlify 前端访问本机 Docker 中的后端服务。该方案不要求购买域名，也不要求 Cloudflare 账户。
+
+项目需要两个临时隧道：
+
+- FastAPI：本机 `8000` → 临时 HTTPS API 地址；
+- MinIO API：本机 `9000` → 临时 HTTPS 图片地址。
+
+PostgreSQL、Redis 和 MinIO Console 不通过隧道公开。MinIO 桶仍保持私有，网页只使用后端签发的短期图片 URL。
+
+首次使用时安装免费客户端：
+
+```powershell
+winget install --id Cloudflare.cloudflared --exact
+```
+
+先启动 Docker，然后把实际 Netlify 站点地址传给辅助脚本：
+
+```powershell
+docker compose up -d
+.\infra\tunnel\start-demo-tunnels.ps1 -NetlifyOrigin https://your-site.netlify.app
+```
+
+脚本会：
+
+1. 启动 API 和图片存储两个 Quick Tunnel；
+2. 把 Netlify 精确来源加入 FastAPI CORS；
+3. 让后端生成可从公网访问的短期 MinIO 图片 URL；
+4. 重启 API、Worker 和 Scheduler；
+5. 输出要填写到 Netlify 的 `VITE_API_BASE_URL`。
+
+在 Netlify 更新该变量并重新部署后即可演示。结束时运行：
+
+```powershell
+.\infra\tunnel\stop-demo-tunnels.ps1
+```
+
+此方案只适合短期展示：
+
+- 电脑、Docker 和两个 `cloudflared` 进程必须持续运行；
+- 每次重启隧道都会产生新地址，需要更新 Netlify 环境变量并重新部署；
+- Quick Tunnel 没有可用性保证，不能作为正式生产后端；
+- 本方案不会让 PostgreSQL 或 Redis 直接暴露到公网。
+
 ## 后端生产配置
 
 后端环境至少应使用以下生产口径：
