@@ -34,6 +34,8 @@ def test_production_accepts_explicit_secure_boundaries() -> None:
         s3_secret_key="production-storage-secret",
         model_provider="openai",
         model_api_key="configured-through-secret-manager",
+        semantic_image_safety_provider="openai",
+        semantic_image_safety_api_key="configured-through-secret-manager",
         _env_file=None,
     )
     assert settings.app_env == "production"

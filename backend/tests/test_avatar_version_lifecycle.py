@@ -4,6 +4,7 @@ import io
 import json
 import zipfile
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -14,7 +15,14 @@ from app.api.dependencies import get_db_session
 from app.config.settings import get_settings
 from app.domain.enums import ApprovalStatus, Role
 from app.main import app
-from app.models import AuditLog, Base, ClinicalCase, PatientSession, StaffUser
+from app.models import (
+    AuditLog,
+    AvatarVersion,
+    Base,
+    ClinicalCase,
+    PatientSession,
+    StaffUser,
+)
 from app.security.crypto import derive_patient_token, hash_password
 from app.services.example_data import seed_example_data
 
@@ -196,12 +204,17 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
             assert hidden_after_revoke.status_code == 409
 
         async with factory() as session:
+            generated_version = await session.get(AvatarVersion, UUID(generated_id))
             download_audit = await session.scalar(
                 select(AuditLog).where(AuditLog.action == "avatar.downloaded")
             )
             rollback_audit = await session.scalar(
                 select(AuditLog).where(AuditLog.action == "avatar.rollback_requested")
             )
+            assert generated_version is not None
+            assert generated_version.semantic_safety_provider == "mock"
+            assert generated_version.semantic_safety_model == "mock-semantic-safety-v1"
+            assert generated_version.semantic_safety_categories_json == []
             assert download_audit is not None
             assert rollback_audit is not None
     finally:

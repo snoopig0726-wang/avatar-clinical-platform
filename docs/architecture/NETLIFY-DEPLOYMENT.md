@@ -92,6 +92,9 @@ GENERATION_DISPATCH_MODE=celery
 MODEL_PROVIDER=openai
 MODEL_NAME=gpt-image-2
 MODEL_API_KEY=由后端密钥管理服务提供
+SEMANTIC_IMAGE_SAFETY_PROVIDER=openai
+SEMANTIC_IMAGE_SAFETY_MODEL=omni-moderation-latest
+SEMANTIC_IMAGE_SAFETY_API_KEY=由后端密钥管理服务提供
 ```
 
 同时替换 `SECRET_KEY`、数据库、Redis、S3 的所有本地默认值，启用 HTTPS，并在发布前执行：

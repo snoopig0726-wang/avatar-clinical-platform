@@ -86,9 +86,10 @@ docker compose up --build
 ```dotenv
 MODEL_PROVIDER=openai
 OPENAI_API_KEY=sk-...
+SEMANTIC_IMAGE_SAFETY_PROVIDER=openai
 ```
 
-密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
+GPT Image 2 与独立语义图片复检默认共用后端 `OPENAI_API_KEY`；如需隔离密钥，可另设 `SEMANTIC_IMAGE_SAFETY_API_KEY`。密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
 
 ### 自动验证
 
@@ -103,6 +104,9 @@ npm run build
 
 # Docker 服务启动后，使用本机 Edge 验证公开入口、医生登录和管理员总览
 npm run test:e2e
+
+# 对已部署站点执行医生、患者、管理员完整业务验收
+python backend/scripts/online_acceptance.py --api-base https://你的后端地址/api --site-url https://你的站点.netlify.app --doctor-password 演示医生密码 --admin-password 演示管理员密码
 ```
 
 仓库同时提供 `.github/workflows/ci.yml`，在每次推送和合并请求中执行后端测试、前端构建及容器化浏览器测试。
@@ -125,6 +129,6 @@ Netlify 仅承载静态前端。FastAPI、Celery Worker/Beat、PostgreSQL、Redi
 
 ## 当前阶段
 
-当前已经打通医生账户申请、本地开发邮箱验证、管理员审批、登录、病例与监督会话、Q1–Q8、声音到视觉映射、患者调整风险拦截与医生审核，以及管理员规则维护、聚合统计、运行告警、脱敏审计、归档恢复和30天到期永久删除。公开高风险入口使用 Redis 匿名化限流；病例关键写操作使用 PostgreSQL 行锁保护并发状态。GPT Image 2、Celery 生成状态机、MinIO 图片存储、独立的医生审核与患者授权、历史版本重新审核回退、不可变版本快照和指定版本下载审计已经实现；未提供 OpenAI Key 时由 Mock Provider 生成联调图片。患者原文加密保存且不会直接进入模型；风险拦截原文和完整生图 Prompt 均不落库。
+当前已经打通医生账户申请、本地开发邮箱验证、管理员审批、登录、病例与监督会话、Q1–Q8、声音到视觉映射、患者调整风险拦截与医生审核，以及管理员规则维护、聚合统计、运行告警、脱敏审计、归档恢复和30天到期永久删除。公开高风险入口使用 Redis 匿名化限流；病例关键写操作使用 PostgreSQL 行锁保护并发状态。GPT Image 2、Celery 生成状态机、MinIO 图片存储、独立语义图片安全复检、医生审核与患者授权、历史版本重新审核回退、不可变版本快照和指定版本下载审计已经实现；未提供 OpenAI Key 时由 Mock Provider 生成联调图片并执行可控 Mock 语义门禁。患者原文加密保存且不会直接进入模型；风险拦截原文和完整生图 Prompt 均不落库。
 
 当前实现状态见 [`docs/decisions/IMPLEMENTATION-STATUS.md`](docs/decisions/IMPLEMENTATION-STATUS.md)。

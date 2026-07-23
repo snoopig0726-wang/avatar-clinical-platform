@@ -4,7 +4,8 @@
 - 更新时间：2026-07-23
 - 运行方式：Docker Compose
 - 图像供应商：Mock Provider
-- 邮箱与域名：虚拟机构邮箱、本地地址
+- 语义图片复检：Mock 门禁（OpenAI Moderation 适配器已就绪）
+- 邮箱与域名：虚拟机构邮箱、Netlify 临时演示地址
 
 ## 1. 当前演示边界
 
@@ -20,13 +21,14 @@
 
 | 验证项 | 当前结果 | 命令或证据 |
 |-|-|-|
-| 后端领域、权限、风险、版本和删除测试 | 28 Pass | `python -m pytest backend/tests -q` |
+| 后端领域、权限、风险、版本和删除测试 | 32 Pass | `python -m pytest backend/tests -q` |
 | Python 静态检查 | Pass | `python -m ruff check backend` |
 | TypeScript 类型检查 | Pass | `npm run typecheck` |
 | 前端生产构建 | Pass | `npm run build` |
 | 桌面端关键流程 | 5 Pass | Playwright `desktop` 项目 |
 | 移动端关键流程与公开页面溢出检查 | 6 Pass | Playwright `mobile` 项目 |
 | PostgreSQL、Redis、MinIO、API、Worker、Scheduler | Pass | `docker compose ps` |
+| Netlify 三角色完整线上业务链路 | Pass | `python backend/scripts/online_acceptance.py ...`，详见 `ONLINE-ACCEPTANCE.md` |
 
 浏览器场景覆盖：
 
@@ -57,9 +59,12 @@ Mock Provider 支持通过根目录环境变量切换演示场景：
 ```dotenv
 MOCK_IMAGE_SCENARIO=success
 MOCK_IMAGE_DELAY_SECONDS=0
+MOCK_SEMANTIC_SAFETY_SCENARIO=pass
 ```
 
 `MOCK_IMAGE_SCENARIO` 可选 `success`、`temporary_failure`、`moderation_blocked` 或 `invalid_image`。修改后重建 API 和 Worker，即可验证失败状态、旧版本保留与医生重试页面；完成异常演示后应恢复为 `success`。
+
+`MOCK_SEMANTIC_SAFETY_SCENARIO` 可选 `pass`、`blocked` 或 `unavailable`。语义拦截会触发一次重新生成；服务不可用或第二次仍拦截时关闭放行，不允许进入医生审核。
 
 ## 4. 不属于当前演示缺陷
 
@@ -72,6 +77,6 @@ MOCK_IMAGE_DELAY_SECONDS=0
 
 ## 5. 仍需保留的安全说明
 
-- 当前独立图片检查只覆盖 PNG 文件结构、体积和尺寸；语义图片复检仍依赖未来选定的外部方案以及医生人工审核；
+- 独立图片检查同时覆盖 PNG 结构门禁和语义门禁；当前演示使用可控 Mock 语义结果，真实 OpenAI Moderation 服务仍需 API Key 才能验证；
 - Mock Provider 只能证明业务状态机、权限和页面流程，不能证明真实模型的画面质量、延迟、费用或内容过滤效果；
 - 如果进入真实机构试点，必须重新执行 `TEST.md` 的全部 P0/P1 验收并保存可复核证据。

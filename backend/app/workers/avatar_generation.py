@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.adapters.image_generation.providers import ImageGenerationError
 from app.config.settings import get_settings
-from app.database import get_session_factory
+from app.database import get_isolated_db_session
 from app.models.entities import AvatarVersion
 from app.services.avatar_generation import (
     mark_avatar_generation_failed,
@@ -18,7 +18,7 @@ from app.workers.celery_app import celery_app
 def generate_avatar(self, version_id: str) -> dict[str, str]:
     async def run() -> dict[str, str]:
         settings = get_settings()
-        async with get_session_factory(settings.database_url)() as session:
+        async with get_isolated_db_session(settings.database_url) as session:
             version = await process_avatar_generation(session, UUID(version_id), settings)
             return {"version_id": version_id, "status": version.generation_status.value}
 
@@ -30,7 +30,7 @@ def generate_avatar(self, version_id: str) -> dict[str, str]:
 
         async def mark_exhausted() -> None:
             settings = get_settings()
-            async with get_session_factory(settings.database_url)() as session:
+            async with get_isolated_db_session(settings.database_url) as session:
                 version = await session.get(AvatarVersion, UUID(version_id))
                 if version is not None:
                     await mark_avatar_generation_failed(

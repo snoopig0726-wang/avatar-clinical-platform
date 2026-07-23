@@ -39,6 +39,11 @@ class Settings(BaseSettings):
         "invalid_image",
     ] = "success"
     mock_image_delay_seconds: float = Field(default=0, ge=0, le=30)
+    semantic_image_safety_provider: Literal["mock", "openai"] = "mock"
+    semantic_image_safety_model: str = "omni-moderation-latest"
+    semantic_image_safety_api_key: str = ""
+    semantic_image_safety_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    mock_semantic_safety_scenario: Literal["pass", "blocked", "unavailable"] = "pass"
     generation_dispatch_mode: str = "inline"
     storage_provider: str = "local"
     local_image_dir: str = ".local-data/avatar-images"
@@ -88,6 +93,13 @@ class Settings(BaseSettings):
             unsafe.append("S3_SECRET_KEY")
         if self.model_provider == "mock" or not self.model_api_key:
             unsafe.append("MODEL_PROVIDER/MODEL_API_KEY")
+        if (
+            self.semantic_image_safety_provider == "mock"
+            or not self.semantic_image_safety_api_key
+        ):
+            unsafe.append(
+                "SEMANTIC_IMAGE_SAFETY_PROVIDER/SEMANTIC_IMAGE_SAFETY_API_KEY"
+            )
         if any(
             "localhost" in origin or origin.startswith("http://")
             for origin in self.frontend_origin_list

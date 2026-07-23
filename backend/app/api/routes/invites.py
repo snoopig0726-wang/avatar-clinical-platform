@@ -108,6 +108,9 @@ async def create_invite(
         expires_at=now + timedelta(hours=payload.expires_in_hours),
     )
     session.add(invite)
+    # PostgreSQL enforces the audit foreign key during the same flush. Persist
+    # the invite first so the audit row cannot be ordered ahead of its parent.
+    await session.flush()
     add_idempotency(
         session,
         actor_scope=scope,
@@ -300,6 +303,9 @@ async def redeem_invite(
     session.add(patient_session)
     invite.status = InviteStatus.REDEEMED_WAITING
     invite.redeemed_at = now
+    # Persist the new session before inserting audit/idempotency rows that
+    # reference it. PostgreSQL does not defer these foreign-key checks.
+    await session.flush()
     add_idempotency(
         session,
         actor_scope=scope,

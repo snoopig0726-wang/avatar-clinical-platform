@@ -58,11 +58,29 @@ async def readiness(
     else:
         dependencies["image_provider"] = "credentials_missing"
 
+    if settings.semantic_image_safety_provider == "mock":
+        dependencies["semantic_image_safety"] = "mock"
+    elif (
+        settings.semantic_image_safety_provider == "openai"
+        and settings.semantic_image_safety_api_key
+    ):
+        dependencies["semantic_image_safety"] = "configured"
+    else:
+        dependencies["semantic_image_safety"] = "credentials_missing"
+
     infrastructure_ready = all(
         dependencies[name] == "ok" for name in ("database", "redis", "object_storage")
     )
     provider_ready = dependencies["image_provider"] in {"mock", "configured"}
+    semantic_safety_ready = dependencies["semantic_image_safety"] in {
+        "mock",
+        "configured",
+    }
     return ReadinessResponse(
-        status="ready" if infrastructure_ready and provider_ready else "degraded",
+        status=(
+            "ready"
+            if infrastructure_ready and provider_ready and semantic_safety_ready
+            else "degraded"
+        ),
         dependencies=dependencies,
     )

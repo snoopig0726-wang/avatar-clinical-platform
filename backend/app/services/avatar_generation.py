@@ -22,6 +22,12 @@ from app.adapters.image_generation.providers import (
     get_image_generation_provider,
 )
 from app.adapters.image_generation.safety import ImageSafetyResult, inspect_generated_image
+from app.adapters.image_generation.semantic_safety import (
+    SemanticImageSafetyError,
+    SemanticImageSafetyProvider,
+    SemanticImageSafetyResult,
+    get_semantic_image_safety_provider,
+)
 from app.adapters.storage import get_object_storage
 from app.api.errors import ApiError
 from app.config.settings import Settings
@@ -44,19 +50,54 @@ class PromptEnvelope:
     sha256: bytes
 
 
+class ImageGenerationSafetyError(ImageGenerationError):
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool = False,
+        semantic_result: SemanticImageSafetyResult | None = None,
+    ) -> None:
+        super().__init__(code, retryable=retryable)
+        self.semantic_result = semantic_result
+
+
 async def generate_with_image_safety_retry(
     provider: ImageGenerationProvider,
     prompt: str,
-) -> tuple[GeneratedImage, ImageSafetyResult]:
+    semantic_safety_provider: SemanticImageSafetyProvider,
+) -> tuple[GeneratedImage, ImageSafetyResult, SemanticImageSafetyResult]:
     """Retry an unsafe or malformed output once, then fail closed."""
     last_code = "IMAGE_SAFETY_FAILED"
+    last_semantic_result: SemanticImageSafetyResult | None = None
     for _attempt in range(2):
         generated = await asyncio.to_thread(provider.generate, prompt)
-        safety = inspect_generated_image(generated.content, generated.mime_type)
-        if safety.allowed:
-            return generated, safety
-        last_code = safety.code
-    raise ImageGenerationError(last_code)
+        structural_safety = inspect_generated_image(
+            generated.content,
+            generated.mime_type,
+        )
+        if not structural_safety.allowed:
+            last_code = structural_safety.code
+            continue
+        try:
+            semantic_safety = await asyncio.to_thread(
+                semantic_safety_provider.inspect,
+                generated.content,
+                generated.mime_type,
+            )
+        except SemanticImageSafetyError as exc:
+            raise ImageGenerationSafetyError(
+                exc.code,
+                retryable=exc.retryable,
+            ) from exc
+        if semantic_safety.allowed:
+            return generated, structural_safety, semantic_safety
+        last_code = semantic_safety.code
+        last_semantic_result = semantic_safety
+    raise ImageGenerationSafetyError(
+        last_code,
+        semantic_result=last_semantic_result,
+    )
 
 
 def _voice_features(sound: SoundDescription) -> VoiceFeatures:
@@ -235,7 +276,18 @@ async def process_avatar_generation(
         version.started_at = version.started_at or utc_now()
         await session.commit()
         provider = get_image_generation_provider(settings)
-        generated, safety = await generate_with_image_safety_retry(provider, prompt.text)
+        try:
+            semantic_safety_provider = get_semantic_image_safety_provider(settings)
+        except SemanticImageSafetyError as exc:
+            raise ImageGenerationSafetyError(
+                exc.code,
+                retryable=exc.retryable,
+            ) from exc
+        generated, safety, semantic_safety = await generate_with_image_safety_retry(
+            provider,
+            prompt.text,
+            semantic_safety_provider,
+        )
         await session.refresh(version)
         if version.generation_status == GenerationStatus.CANCELLED:
             return version
@@ -266,6 +318,12 @@ async def process_avatar_generation(
         version.image_width = safety.width
         version.image_height = safety.height
         version.provider_request_id = generated.provider_request_id
+        version.semantic_safety_provider = semantic_safety.provider
+        version.semantic_safety_model = semantic_safety.model
+        version.semantic_safety_request_id = semantic_safety.provider_request_id
+        version.semantic_safety_categories_json = list(
+            semantic_safety.flagged_categories
+        )
         version.safety_status = "passed"
         version.generation_status = GenerationStatus.PENDING_DOCTOR_REVIEW
         version.completed_at = utc_now()
@@ -279,6 +337,14 @@ async def process_avatar_generation(
             raise
         if version.generation_status == GenerationStatus.CANCELLED:
             return version
+        if isinstance(exc, ImageGenerationSafetyError) and exc.semantic_result:
+            semantic_result = exc.semantic_result
+            version.semantic_safety_provider = semantic_result.provider
+            version.semantic_safety_model = semantic_result.model
+            version.semantic_safety_request_id = semantic_result.provider_request_id
+            version.semantic_safety_categories_json = list(
+                semantic_result.flagged_categories
+            )
         if exc.retryable:
             version.generation_status = GenerationStatus.QUEUED
             version.failure_code = exc.code
