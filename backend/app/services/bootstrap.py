@@ -9,6 +9,7 @@ from app.models import Base, ClinicalCase, RetentionJob, StaffUser
 from app.security.crypto import hash_password, hash_secret
 from app.services.core import utc_now
 from app.services.example_data import seed_example_data
+from app.services.retention import recover_stale_retention_jobs
 from app.services.risk_engine import seed_default_risk_rules
 
 
@@ -23,6 +24,7 @@ async def initialize_local_database(settings: Settings) -> None:
 async def bootstrap_database_data(settings: Settings) -> None:
     async with get_session_factory(settings.database_url)() as session:
         await seed_default_risk_rules(session)
+        await recover_stale_retention_jobs(session)
         retained_cases = (
             await session.scalars(
                 select(ClinicalCase).where(

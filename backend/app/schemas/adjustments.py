@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.enums import AdjustmentStatus
 
@@ -26,7 +26,9 @@ class SubmitAdjustmentRequest(BaseModel):
 class PatientAdjustmentResponse(BaseModel):
     request_id: UUID
     sequence_no: int
+    instruction: str
     status: AdjustmentStatus
+    rejection_reason: str | None = None
     submitted_at: datetime
     reviewed_at: datetime | None = None
 
@@ -45,8 +47,9 @@ class PatientAdjustmentListResponse(BaseModel):
 
 
 class DoctorAdjustmentResponse(PatientAdjustmentResponse):
-    instruction: str
     controlled_instruction: str | None = None
+    suggested_controlled_instruction: str
+    controlled_options: list[str]
 
 
 class DoctorAdjustmentListResponse(BaseModel):
@@ -62,6 +65,18 @@ class ReviewAdjustmentRequest(BaseModel):
 
     decision: Literal["approve_as_is", "approve_edited", "reject"]
     controlled_instruction: str | None = Field(default=None, max_length=200)
+    rejection_reason: str | None = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_decision_details(self) -> ReviewAdjustmentRequest:
+        if self.decision == "reject":
+            reason = (self.rejection_reason or "").strip()
+            if len(reason) < 2:
+                raise ValueError("rejection_reason is required when rejecting")
+            self.rejection_reason = reason
+        elif self.rejection_reason is not None:
+            raise ValueError("rejection_reason is only allowed when rejecting")
+        return self
 
 
 class PatientAvatarResponse(BaseModel):

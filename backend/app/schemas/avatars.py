@@ -55,6 +55,18 @@ class ReviewAvatarRequest(BaseModel):
     decision: Literal["approve", "reject"]
 
 
+class DeleteAvatarVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: Literal["DELETE_UNAUTHORIZED_AVATAR_VERSION"]
+    reason: str | None = Field(default=None, max_length=100)
+
+
+class DeleteAvatarVersionResponse(BaseModel):
+    version_id: UUID
+    generation_round: int
+    deleted: Literal[True] = True
+
+
 class AuthorizeAvatarRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: UUID

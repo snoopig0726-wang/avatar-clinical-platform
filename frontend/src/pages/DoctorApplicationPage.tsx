@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { AccessFrame } from '../components/AccessFrame'
+import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
@@ -26,6 +27,7 @@ type ApplicationValues = {
 
 export function DoctorApplicationPage() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [application, setApplication] = useState<DoctorApplicationResponse | null>(null)
@@ -52,7 +54,7 @@ export function DoctorApplicationPage() {
       setError(
         requestError instanceof ApiClientError
           ? requestError.message
-          : '账户申请暂时无法提交',
+          : t('账户申请暂时无法提交'),
       )
     } finally {
       setSubmitting(false)
@@ -74,7 +76,7 @@ export function DoctorApplicationPage() {
       setError(
         requestError instanceof ApiClientError
           ? requestError.message
-          : '邮箱验证暂时无法完成',
+          : t('邮箱验证暂时无法完成'),
       )
     } finally {
       setSubmitting(false)
@@ -83,14 +85,14 @@ export function DoctorApplicationPage() {
 
   return (
     <AccessFrame
-      eyebrow="医生账户申请"
-      title="申请临床研究工作台权限"
-      description="医生账户需要完成机构邮箱验证，并由系统管理员审批后才能登录。"
-      asideTitle="账户权限采用双重门禁"
+      eyebrow={t('医护账户申请')}
+      title={t('申请医护工作台账户')}
+      description={t('仅向经过机构验证和管理员审批的专业人员开放。')}
+      asideTitle={t('只让经过验证的专业人员进入')}
       asideItems={[
-        '机构邮箱验证确认申请来源',
-        '管理员审批后才开放医生工作台',
-        '账户停用会立即撤销现有登录会话',
+        t('机构邮箱用于确认专业身份与申请来源'),
+        t('管理员审批通过后才能访问患者相关工作'),
+        t('账户停用后，现有登录会话会立即失效'),
       ]}
     >
       {error && <Alert className="access-alert" type="error" showIcon message={error} />}
@@ -98,11 +100,11 @@ export function DoctorApplicationPage() {
         <Result
           status="success"
           icon={<CheckCircleOutlined />}
-          title="机构邮箱验证完成"
-          subTitle="账户正在等待管理员审批。审批通过后即可使用申请时设置的密码登录。"
+          title={t('机构邮箱验证完成')}
+          subTitle={t('账户正在等待管理员审批。审批通过后即可使用申请时设置的密码登录。')}
           extra={
             <Button type="primary" onClick={() => navigate('/doctor/login')}>
-              返回医生登录
+              {t('返回医生登录')}
             </Button>
           }
         />
@@ -112,7 +114,7 @@ export function DoctorApplicationPage() {
             className="access-alert"
             type="success"
             showIcon
-            message="账户申请已创建"
+            message={t('账户申请已创建')}
             description={application.message}
           />
           {application.development_verification_token ? (
@@ -121,8 +123,8 @@ export function DoctorApplicationPage() {
                 className="access-alert"
                 type="warning"
                 showIcon
-                message="本地开发验证"
-                description="当前未连接机构邮件服务。此按钮仅在本地开发环境出现，用于验证完整审批流程。"
+                message={t('本地开发验证')}
+                description={t('当前未连接机构邮件服务。此按钮仅在本地开发环境出现，用于验证完整审批流程。')}
               />
               <Button
                 type="primary"
@@ -131,7 +133,7 @@ export function DoctorApplicationPage() {
                 loading={submitting}
                 onClick={() => void verifyDevelopmentEmail()}
               >
-                完成本地邮箱验证
+                {t('完成本地邮箱验证')}
               </Button>
             </>
           ) : (
@@ -139,12 +141,12 @@ export function DoctorApplicationPage() {
               className="access-alert"
               type="info"
               showIcon
-              message="等待机构邮箱验证"
-              description="请按照机构发送的验证通知继续；验证完成后账户将进入管理员审批队列。"
+              message={t('等待机构邮箱验证')}
+              description={t('请按照机构发送的验证通知继续；验证完成后账户将进入管理员审批队列。')}
             />
           )}
           <p className="access-secondary">
-            已完成申请？<Button type="link" onClick={() => navigate('/doctor/login')}>返回登录</Button>
+            {t('已完成申请？')}<Button type="link" onClick={() => navigate('/doctor/login')}>{t('返回登录')}</Button>
           </p>
         </>
       ) : (
@@ -156,56 +158,56 @@ export function DoctorApplicationPage() {
         >
           <Form.Item
             name="display_name"
-            label="医生姓名"
+            label={t('医生姓名')}
             rules={[
-              { required: true, message: '请输入医生姓名' },
-              { min: 2, max: 100, message: '姓名长度应为 2–100 个字符' },
+              { required: true, message: t('请输入医生姓名') },
+              { min: 2, max: 100, message: t('姓名长度应为 2–100 个字符') },
             ]}
           >
-            <Input prefix={<UserOutlined />} placeholder="用于工作台和审核记录" />
+            <Input prefix={<UserOutlined />} placeholder={t('用于工作台和审核记录')} />
           </Form.Item>
           <Form.Item
             name="email"
-            label="机构邮箱"
+            label={t('机构邮箱')}
             rules={[
-              { required: true, message: '请输入机构邮箱' },
-              { type: 'email', message: '请输入有效的邮箱地址' },
+              { required: true, message: t('请输入机构邮箱') },
+              { type: 'email', message: t('请输入有效的邮箱地址') },
             ]}
           >
             <Input prefix={<MailOutlined />} placeholder="name@institution.org" />
           </Form.Item>
           <Form.Item
             name="password"
-            label="设置密码"
+            label={t('设置密码')}
             rules={[
-              { required: true, message: '请设置账户密码' },
-              { min: 12, message: '密码至少需要 12 个字符' },
+              { required: true, message: t('请设置账户密码') },
+              { min: 12, message: t('密码至少需要 12 个字符') },
             ]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="至少 12 个字符"
+              placeholder={t('至少 12 个字符')}
               autoComplete="new-password"
             />
           </Form.Item>
           <Form.Item
             name="confirm_password"
-            label="确认密码"
+            label={t('确认密码')}
             dependencies={['password']}
             rules={[
-              { required: true, message: '请再次输入密码' },
+              { required: true, message: t('请再次输入密码') },
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   return !value || getFieldValue('password') === value
                     ? Promise.resolve()
-                    : Promise.reject(new Error('两次输入的密码不一致'))
+                    : Promise.reject(new Error(t('两次输入的密码不一致')))
                 },
               }),
             ]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="再次输入密码"
+              placeholder={t('再次输入密码')}
               autoComplete="new-password"
             />
           </Form.Item>
@@ -216,10 +218,10 @@ export function DoctorApplicationPage() {
             className="access-submit"
             loading={submitting}
           >
-            提交账户申请
+            {t('提交账户申请')}
           </Button>
           <p className="access-secondary">
-            已有账户？<Button type="link" onClick={() => navigate('/doctor/login')}>返回登录</Button>
+            {t('已有账户？')}<Button type="link" onClick={() => navigate('/doctor/login')}>{t('返回登录')}</Button>
           </p>
         </Form>
       )}

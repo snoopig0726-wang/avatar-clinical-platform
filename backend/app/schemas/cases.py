@@ -29,6 +29,7 @@ class CaseResponse(BaseModel):
     archived_at: datetime | None = None
     retention_due_at: datetime | None = None
     active_session_count: int = 0
+    total_session_count: int = 0
 
 
 class CaseListResponse(BaseModel):

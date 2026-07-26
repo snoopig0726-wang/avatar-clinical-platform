@@ -92,6 +92,7 @@ class OpenAIImageGenerationProvider:
         from openai import OpenAI
 
         self.model = settings.model_name
+        self.quality = settings.model_quality
         self.client = OpenAI(
             api_key=settings.model_api_key,
             timeout=settings.model_timeout_seconds,
@@ -104,7 +105,7 @@ class OpenAIImageGenerationProvider:
                 model=self.model,
                 prompt=prompt,
                 size="1024x1024",
-                quality="medium",
+                quality=self.quality,
                 output_format="png",
                 moderation="auto",
                 n=1,

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     model_provider: str = "mock"
     model_name: str = "gpt-image-2"
     model_api_key: str = ""
+    model_quality: Literal["low", "medium", "high", "auto"] = "low"
     model_timeout_seconds: int = Field(default=180, ge=10, le=300)
     mock_image_scenario: Literal[
         "success",

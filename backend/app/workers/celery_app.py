@@ -16,9 +16,9 @@ celery_app.conf.update(
     result_expires=86400,
     timezone="UTC",
     beat_schedule={
-        "retention-every-hour": {
+        "retention-every-10-seconds": {
             "task": "retention.process_due_cases",
-            "schedule": 3600.0,
+            "schedule": 10.0,
         }
     },
     imports=("app.workers.retention", "app.workers.avatar_generation"),

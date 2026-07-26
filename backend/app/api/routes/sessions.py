@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -16,13 +17,23 @@ from app.api.errors import ApiError
 from app.database import get_db_session
 from app.domain.enums import (
     AuditActorType,
+    AuthorizationStatus,
     CaseStatus,
+    GenerationStatus,
     InviteStatus,
     Role,
     SessionStatus,
 )
 from app.domain.transitions import SESSION_TRANSITIONS, InvalidStateTransition, assert_transition
-from app.models.entities import ClinicalCase, PatientSession, SessionInvite
+from app.models.entities import (
+    AvatarVersion,
+    ClinicalCase,
+    PatientSession,
+    SessionAvatarAuthorization,
+    SessionInvite,
+    SoundDescription,
+)
+from app.schemas.features import QUESTION_KEYS
 from app.schemas.sessions import (
     AdjustmentUsage,
     SessionControlRequest,
@@ -34,10 +45,14 @@ from app.services.core import add_audit, add_idempotency, find_idempotency, utc_
 router = APIRouter()
 
 
-def stage_for_status(status: SessionStatus) -> str:
+def stage_for_status(status: SessionStatus, assessment_mode: str) -> str:
     return {
         SessionStatus.WAITING_DOCTOR: "waiting_doctor_start",
-        SessionStatus.ACTIVE: "voice_interview",
+        SessionStatus.ACTIVE: (
+            "voice_interview"
+            if assessment_mode == "new_assessment"
+            else "avatar_review"
+        ),
         SessionStatus.PAUSED: "safety_paused",
         SessionStatus.ENDED: "ended",
         SessionStatus.EXPIRED: "expired",
@@ -45,20 +60,57 @@ def stage_for_status(status: SessionStatus) -> str:
 
 
 def session_response(
-    patient_session: PatientSession, *, study_code: str | None = None
+    patient_session: PatientSession,
+    *,
+    study_code: str | None = None,
+    has_prior_assessment: bool = False,
 ) -> SessionResponse:
     return SessionResponse(
         session_id=patient_session.session_id,
         case_id=patient_session.case_id,
         study_code=study_code,
         status=patient_session.status,
-        stage=stage_for_status(patient_session.status),
+        stage=stage_for_status(patient_session.status, patient_session.assessment_mode),
+        assessment_mode=patient_session.assessment_mode,
+        has_prior_assessment=has_prior_assessment,
         adjustments=AdjustmentUsage(),
         created_at=patient_session.created_at,
         started_at=patient_session.started_at,
         paused_at=patient_session.paused_at,
         ended_at=patient_session.ended_at,
         expires_at=patient_session.expires_at,
+    )
+
+
+async def has_prior_complete_assessment(
+    session: AsyncSession, patient_session: PatientSession
+) -> bool:
+    descriptions = (
+        await session.scalars(
+            select(SoundDescription).where(
+                SoundDescription.case_id == patient_session.case_id,
+                SoundDescription.session_id != patient_session.session_id,
+            )
+        )
+    ).all()
+    return any(
+        set(item.answered_questions or []) == set(QUESTION_KEYS)
+        for item in descriptions
+    )
+
+
+async def build_session_response(
+    session: AsyncSession,
+    patient_session: PatientSession,
+    *,
+    study_code: str | None = None,
+) -> SessionResponse:
+    return session_response(
+        patient_session,
+        study_code=study_code,
+        has_prior_assessment=await has_prior_complete_assessment(
+            session, patient_session
+        ),
     )
 
 
@@ -91,11 +143,13 @@ async def get_session(
             raise ApiError(404, "RESOURCE_NOT_FOUND", "会话不存在或无权访问")
         patient_session = await doctor_session_or_404(session, session_id, staff.user.user_id)
         case = await session.get(ClinicalCase, patient_session.case_id)
-        return session_response(patient_session, study_code=case.study_code if case else None)
+        return await build_session_response(
+            session, patient_session, study_code=case.study_code if case else None
+        )
     patient_session = await authenticate_patient_session(session_id, patient_token, session)
     patient_session.last_seen_at = utc_now()
     await session.commit()
-    return session_response(patient_session)
+    return await build_session_response(session, patient_session)
 
 
 @router.post("/sessions/{session_id}/start", response_model=SessionResponse)
@@ -118,13 +172,38 @@ async def start_session(
     )
     case = await session.get(ClinicalCase, patient_session.case_id)
     if existing:
-        return session_response(patient_session, study_code=case.study_code if case else None)
+        return await build_session_response(
+            session, patient_session, study_code=case.study_code if case else None
+        )
     if not payload.consent_confirmed:
         raise ApiError(422, "VALIDATION_ERROR", "医生必须确认已完成当面知情同意")
     ensure_transition(patient_session.status, SessionStatus.ACTIVE)
     if case is None or case.status == CaseStatus.ARCHIVED:
         raise ApiError(409, "STATE_CONFLICT", "当前病例不能启动会话")
     now = utc_now()
+    has_prior_assessment = await has_prior_complete_assessment(
+        session, patient_session
+    )
+    if has_prior_assessment and payload.assessment_mode is None:
+        raise ApiError(
+            422,
+            "ASSESSMENT_MODE_REQUIRED",
+            "请选择沿用上次记录或重新评估 Q1–Q8",
+        )
+    if (
+        payload.assessment_mode == "reuse_previous"
+        and not has_prior_assessment
+    ):
+        raise ApiError(
+            409,
+            "NO_PRIOR_ASSESSMENT",
+            "本病例尚无完整的 Q1–Q8 记录，首次会话必须完成评估",
+        )
+    patient_session.assessment_mode = (
+        payload.assessment_mode
+        if has_prior_assessment and payload.assessment_mode
+        else "new_assessment"
+    )
     patient_session.status = SessionStatus.ACTIVE
     patient_session.started_at = now
     patient_session.consent_confirmed_by = staff.user.user_id
@@ -136,6 +215,30 @@ async def start_session(
     if case.status == CaseStatus.DRAFT:
         case.status = CaseStatus.IN_PROGRESS
         case.updated_at = now
+    reused_version: AvatarVersion | None = None
+    if patient_session.assessment_mode == "reuse_previous":
+        reused_version = await session.scalar(
+            select(AvatarVersion)
+            .where(
+                AvatarVersion.case_id == patient_session.case_id,
+                AvatarVersion.generation_status == GenerationStatus.APPROVED,
+            )
+            .order_by(
+                AvatarVersion.is_current_candidate.desc(),
+                AvatarVersion.generation_round.desc(),
+            )
+            .limit(1)
+        )
+        if reused_version is not None:
+            session.add(
+                SessionAvatarAuthorization(
+                    session_id=session_id,
+                    version_id=reused_version.version_id,
+                    status=AuthorizationStatus.AUTHORIZED,
+                    authorized_by=staff.user.user_id,
+                    authorized_at=now,
+                )
+            )
     add_idempotency(
         session,
         actor_scope=scope,
@@ -152,10 +255,18 @@ async def start_session(
         invite_id=patient_session.invite_id,
         session_id=session_id,
         action="session.started",
-        metadata={"consent_version": payload.consent_version},
+        metadata={
+            "consent_version": payload.consent_version,
+            "assessment_mode": patient_session.assessment_mode,
+            "reused_version_id": (
+                str(reused_version.version_id) if reused_version else None
+            ),
+        },
     )
     await session.commit()
-    return session_response(patient_session, study_code=case.study_code)
+    return await build_session_response(
+        session, patient_session, study_code=case.study_code
+    )
 
 
 @router.post("/patient-sessions/{session_id}/pause", response_model=SessionResponse)
@@ -177,7 +288,7 @@ async def pause_session(
         payload=request_payload,
     )
     if existing:
-        return session_response(patient_session)
+        return await build_session_response(session, patient_session)
     ensure_transition(patient_session.status, SessionStatus.PAUSED)
     patient_session.status = SessionStatus.PAUSED
     patient_session.paused_at = utc_now()
@@ -199,7 +310,7 @@ async def pause_session(
         metadata={"reason_present": bool(payload.reason)},
     )
     await session.commit()
-    return session_response(patient_session)
+    return await build_session_response(session, patient_session)
 
 
 @router.post("/sessions/{session_id}/resume", response_model=SessionResponse)
@@ -222,7 +333,9 @@ async def resume_session(
     )
     case = await session.get(ClinicalCase, patient_session.case_id)
     if existing:
-        return session_response(patient_session, study_code=case.study_code if case else None)
+        return await build_session_response(
+            session, patient_session, study_code=case.study_code if case else None
+        )
     ensure_transition(patient_session.status, SessionStatus.ACTIVE)
     patient_session.status = SessionStatus.ACTIVE
     add_idempotency(
@@ -243,7 +356,9 @@ async def resume_session(
         action="session.resumed",
     )
     await session.commit()
-    return session_response(patient_session, study_code=case.study_code if case else None)
+    return await build_session_response(
+        session, patient_session, study_code=case.study_code if case else None
+    )
 
 
 @router.post("/sessions/{session_id}/stop", response_model=SessionResponse)
@@ -266,7 +381,9 @@ async def stop_session(
     )
     case = await session.get(ClinicalCase, patient_session.case_id)
     if existing:
-        return session_response(patient_session, study_code=case.study_code if case else None)
+        return await build_session_response(
+            session, patient_session, study_code=case.study_code if case else None
+        )
     ensure_transition(patient_session.status, SessionStatus.ENDED)
     now = utc_now()
     patient_session.status = SessionStatus.ENDED
@@ -293,4 +410,6 @@ async def stop_session(
         metadata={"reason_present": bool(payload.reason)},
     )
     await session.commit()
-    return session_response(patient_session, study_code=case.study_code if case else None)
+    return await build_session_response(
+        session, patient_session, study_code=case.study_code if case else None
+    )

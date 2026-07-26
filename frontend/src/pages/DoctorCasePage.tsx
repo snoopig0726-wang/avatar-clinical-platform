@@ -5,6 +5,7 @@ import {
   ClockCircleOutlined,
   CopyOutlined,
   DownloadOutlined,
+  DeleteOutlined,
   FormOutlined,
   HistoryOutlined,
   KeyOutlined,
@@ -22,18 +23,21 @@ import {
   Checkbox,
   Descriptions,
   Empty,
+  Input,
   Modal,
-  Select,
+  Radio,
   Space,
   Spin,
   Tag,
   Timeline,
   message,
 } from 'antd'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Brand } from '../components/Brand'
+import { LanguageSwitcher } from '../components/LanguageSwitcher'
+import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
@@ -43,6 +47,7 @@ import {
   type ClinicalCase,
   type DoctorAdjustment,
   type DoctorAdjustmentList,
+  type DeleteAvatarVersionResponse,
   type InviteListResponse,
   newIdempotencyKey,
   type PatientSession,
@@ -81,7 +86,7 @@ const adjustmentStatusLabels: Record<DoctorAdjustment['status'], string> = {
 
 const generationStatusLabels: Record<AvatarVersion['generation_status'], string> = {
   queued: '排队中',
-  generating: 'GPT Image 2 生成中',
+  generating: '正在生成视觉表达',
   checking: '图片安全检查中',
   pending_doctor_review: '等待医生审核',
   approved: '已审核并可授权',
@@ -93,6 +98,8 @@ const generationStatusLabels: Record<AvatarVersion['generation_status'], string>
 export function DoctorCasePage() {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
+  const { language, t } = useLanguage()
+  const dateLocale = language === 'en' ? 'en-US' : language
   const [messageApi, messageContext] = message.useMessage()
   const [clinicalCase, setClinicalCase] = useState<ClinicalCase | null>(null)
   const [invites, setInvites] = useState<SessionInvite[]>([])
@@ -105,10 +112,37 @@ export function DoctorCasePage() {
   const [createdInvite, setCreatedInvite] = useState<SessionInvite | null>(null)
   const [startTarget, setStartTarget] = useState<PatientSession | null>(null)
   const [consentConfirmed, setConsentConfirmed] = useState(false)
+  const [assessmentMode, setAssessmentMode] = useState<
+    'new_assessment' | 'reuse_previous' | null
+  >(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [working, setWorking] = useState(false)
-  const [editTarget, setEditTarget] = useState<DoctorAdjustment | null>(null)
-  const [controlledInstruction, setControlledInstruction] = useState<string | null>(null)
+  const [rejectTarget, setRejectTarget] = useState<DoctorAdjustment | null>(null)
+  const [rejectionReason, setRejectionReason] = useState('')
+  const knownAdjustmentIds = useRef<Set<string> | null>(null)
+
+  const loadAdjustments = useCallback(async () => {
+    const token = staffTokenStore.get()
+    if (!token || !caseId) return
+    try {
+      const result = await apiRequest<DoctorAdjustmentList>(
+        `/cases/${caseId}/adjustment-requests`,
+        { staffToken: token },
+      )
+      const nextIds = new Set(result.items.map((item) => item.request_id))
+      const knownIds = knownAdjustmentIds.current
+      if (knownIds && result.items.some((item) => !knownIds.has(item.request_id))) {
+        messageApi.info(t('收到新的患者调整建议'))
+      }
+      knownAdjustmentIds.current = nextIds
+      setAdjustments(result)
+    } catch (requestError) {
+      if (requestError instanceof ApiClientError && requestError.status === 401) {
+        staffTokenStore.clear()
+        navigate('/doctor/login', { replace: true })
+      }
+    }
+  }, [caseId, messageApi, navigate, t])
 
   const loadCase = useCallback(async () => {
     const token = staffTokenStore.get()
@@ -135,17 +169,21 @@ export function DoctorCasePage() {
           throw requestError
         }),
       ])
+      const visibleInvites = inviteResult.items.filter((item) => item.status !== 'revoked')
       const sessionResults = await Promise.all(
-        inviteResult.items
+        visibleInvites
           .filter((item) => item.session_id)
           .map((item) =>
             apiRequest<PatientSession>(`/sessions/${item.session_id}`, { staffToken: token }),
           ),
       )
       setClinicalCase(caseResult)
-      setInvites(inviteResult.items)
+      setInvites(visibleInvites)
       setSessions(Object.fromEntries(sessionResults.map((item) => [item.session_id, item])))
       setAdjustments(adjustmentResult)
+      knownAdjustmentIds.current = new Set(
+        adjustmentResult.items.map((item) => item.request_id),
+      )
       setAvatarVersions(versionResult.items)
       setVisualFeatures(visualResult)
       setError(null)
@@ -155,11 +193,11 @@ export function DoctorCasePage() {
         navigate('/doctor/login', { replace: true })
         return
       }
-      setError(requestError instanceof Error ? requestError.message : '病例加载失败')
+      setError(requestError instanceof Error ? requestError.message : t('病例加载失败'))
     } finally {
       setLoading(false)
     }
-  }, [caseId, navigate])
+  }, [caseId, navigate, t])
 
   useEffect(() => void loadCase(), [loadCase])
 
@@ -168,6 +206,20 @@ export function DoctorCasePage() {
     const timer = window.setInterval(() => void loadCase(), 3000)
     return () => window.clearInterval(timer)
   }, [avatarVersions, loadCase])
+
+  useEffect(() => {
+    const refreshVisibleAdjustments = () => {
+      if (document.visibilityState === 'visible') void loadAdjustments()
+    }
+    const timer = window.setInterval(refreshVisibleAdjustments, 3000)
+    window.addEventListener('focus', refreshVisibleAdjustments)
+    document.addEventListener('visibilitychange', refreshVisibleAdjustments)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshVisibleAdjustments)
+      document.removeEventListener('visibilitychange', refreshVisibleAdjustments)
+    }
+  }, [loadAdjustments])
 
   async function createInvite() {
     const token = staffTokenStore.get()
@@ -183,7 +235,31 @@ export function DoctorCasePage() {
       setInvites((current) => [result, ...current])
       setCreatedInvite(result)
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '邀请码创建失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('邀请码创建失败'))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function cancelInvite(target: SessionInvite) {
+    const token = staffTokenStore.get()
+    if (!token) return
+    setWorking(true)
+    try {
+      await apiRequest<SessionInvite>(`/session-invites/${target.invite_id}`, {
+        method: 'DELETE',
+        staffToken: token,
+        idempotencyKey: newIdempotencyKey('invite-cancel'),
+      })
+      setCreatedInvite((current) =>
+        current?.invite_id === target.invite_id ? null : current,
+      )
+      messageApi.success(t('邀请码已取消，患者将无法继续兑换'))
+      await loadCase()
+    } catch (requestError) {
+      messageApi.error(
+        requestError instanceof Error ? requestError.message : t('邀请码取消失败'),
+      )
     } finally {
       setWorking(false)
     }
@@ -199,7 +275,13 @@ export function DoctorCasePage() {
     try {
       const body =
         action === 'start'
-          ? { consent_confirmed: true, consent_version: 'v1' }
+          ? {
+              consent_confirmed: true,
+              consent_version: 'v1',
+              assessment_mode: target.has_prior_assessment
+                ? assessmentMode
+                : 'new_assessment',
+            }
           : action === 'stop'
             ? { reason: 'doctor_ended' }
             : {}
@@ -215,10 +297,11 @@ export function DoctorCasePage() {
       setSessions((current) => ({ ...current, [result.session_id]: result }))
       setStartTarget(null)
       setConsentConfirmed(false)
-      messageApi.success(action === 'start' ? '会话已启动' : action === 'resume' ? '会话已恢复' : '会话已结束')
+      setAssessmentMode(null)
+      messageApi.success(t(action === 'start' ? '会话已启动' : action === 'resume' ? '会话已恢复' : '会话已结束'))
       void loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '操作失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('操作失败'))
     } finally {
       setWorking(false)
     }
@@ -237,10 +320,10 @@ export function DoctorCasePage() {
       })
       setClinicalCase(result)
       setArchiveOpen(false)
-      messageApi.success('病例已归档，30 天删除倒计时已经开始')
+      messageApi.success(t('病例已归档，30 天删除倒计时已经开始'))
       void loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '归档失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('归档失败'))
     } finally {
       setWorking(false)
     }
@@ -248,7 +331,8 @@ export function DoctorCasePage() {
 
   async function reviewAdjustment(
     target: DoctorAdjustment,
-    decision: 'approve_as_is' | 'approve_edited' | 'reject',
+    decision: 'approve_as_is' | 'reject',
+    reason?: string,
   ) {
     const token = staffTokenStore.get()
     if (!token) return
@@ -260,17 +344,20 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('adjustment-review'),
         body: {
           decision,
-          controlled_instruction: decision === 'approve_edited' ? controlledInstruction : null,
+          controlled_instruction: null,
+          rejection_reason: decision === 'reject' ? reason?.trim() : null,
         },
       })
-      setEditTarget(null)
-      setControlledInstruction(null)
+      if (decision === 'reject') {
+        setRejectTarget(null)
+        setRejectionReason('')
+      }
       messageApi.success(
-        decision === 'reject' ? '已拒绝该调整建议' : '审核已保存，可以生成调整版本',
+        t(decision === 'reject' ? '已拒绝该调整建议' : '审核已保存，可以生成调整版本'),
       )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '审核未能保存')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('审核未能保存'))
     } finally {
       setWorking(false)
     }
@@ -287,10 +374,10 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('avatar-generate'),
         body: { mode },
       })
-      messageApi.success('生图任务已提交，完成后需要医生审核才会展示给患者')
+      messageApi.success(t('生图任务已提交，完成后需要医生审核才会展示给患者'))
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '生图任务提交失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('生图任务提交失败'))
     } finally {
       setWorking(false)
     }
@@ -307,10 +394,14 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('avatar-cancel'),
         body: { reason: 'doctor_cancelled' },
       })
-      messageApi.info(`第 ${target.generation_round} 版生成任务已取消`)
+      messageApi.info(
+        language === 'en'
+          ? `Version ${target.generation_round} generation was cancelled`
+          : `${t('第')} ${target.generation_round} ${t('版生成任务已取消')}`,
+      )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '生成任务取消失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('生成任务取消失败'))
     } finally {
       setWorking(false)
     }
@@ -326,10 +417,10 @@ export function DoctorCasePage() {
         staffToken: token,
         idempotencyKey: newIdempotencyKey('adjustment-generate'),
       })
-      messageApi.success('调整版本已进入生图和安全检查流程')
+      messageApi.success(t('调整版本已进入生图和安全检查流程'))
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '调整版本生成失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('调整版本生成失败'))
     } finally {
       setWorking(false)
     }
@@ -348,12 +439,39 @@ export function DoctorCasePage() {
       })
       messageApi.success(
         decision === 'approve'
-          ? '审核已通过；还需单独授权后患者才能查看'
-          : '该版本已拒绝',
+          ? t('审核已通过；还需单独授权后患者才能查看')
+          : t('该版本已拒绝并自动删除'),
       )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '版本审核失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('版本审核失败'))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function deleteAvatarVersion(target: AvatarVersion) {
+    const token = staffTokenStore.get()
+    if (!token) return
+    setWorking(true)
+    try {
+      await apiRequest<DeleteAvatarVersionResponse>(`/avatar-versions/${target.version_id}/delete`, {
+        method: 'POST',
+        staffToken: token,
+        idempotencyKey: newIdempotencyKey('avatar-version-delete'),
+        body: {
+          confirmation: 'DELETE_UNAUTHORIZED_AVATAR_VERSION',
+          reason: 'doctor_manual_delete',
+        },
+      })
+      messageApi.success(
+        language === 'en'
+          ? `Version ${target.generation_round} was permanently deleted`
+          : `${t('第')} ${target.generation_round} ${t('版已永久删除')}`,
+      )
+      await loadCase()
+    } catch (requestError) {
+      messageApi.error(requestError instanceof Error ? requestError.message : t('版本删除失败'))
     } finally {
       setWorking(false)
     }
@@ -364,7 +482,7 @@ export function DoctorCasePage() {
     if (!token) return
     const activeSession = Object.values(sessions).find((item) => item.status === 'active')
     if (!activeSession) {
-      messageApi.warning('请先启动本病例的患者监督会话')
+      messageApi.warning(t('请先启动本病例的患者监督会话'))
       return
     }
     setWorking(true)
@@ -375,10 +493,14 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('avatar-authorize'),
         body: { session_id: activeSession.session_id },
       })
-      messageApi.success(`已授权第 ${target.generation_round} 版，患者端现在可以查看`)
+      messageApi.success(
+        language === 'en'
+          ? `Version ${target.generation_round} is now available to the patient`
+          : `${t('已授权第')} ${target.generation_round} ${t('版，患者端现在可以查看')}`,
+      )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '版本授权失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('版本授权失败'))
     } finally {
       setWorking(false)
     }
@@ -389,7 +511,7 @@ export function DoctorCasePage() {
     if (!token) return
     const activeSession = Object.values(sessions).find((item) => item.status === 'active')
     if (!activeSession) {
-      messageApi.warning('请先启动本病例的患者监督会话')
+      messageApi.warning(t('请先启动本病例的患者监督会话'))
       return
     }
     setWorking(true)
@@ -401,11 +523,13 @@ export function DoctorCasePage() {
         body: { session_id: activeSession.session_id },
       })
       messageApi.warning(
-        `已选择第 ${target.generation_round} 版作为回退候选，旧授权已撤销；请重新审核后再授权`,
+        language === 'en'
+          ? `Version ${target.generation_round} was selected for rollback. The previous authorization has been revoked; review and authorize it again.`
+          : `${t('已选择第')} ${target.generation_round} ${t('版作为回退候选，旧授权已撤销；请重新审核后再授权')}`,
       )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '版本回退失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('版本回退失败'))
     } finally {
       setWorking(false)
     }
@@ -428,9 +552,9 @@ export function DoctorCasePage() {
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(url)
-      messageApi.success('指定版本和对应 Q1–Q8 快照已下载，操作已记录审计')
+      messageApi.success(t('指定版本和对应 Q1–Q8 快照已下载，操作已记录审计'))
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '版本下载失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('版本下载失败'))
     } finally {
       setWorking(false)
     }
@@ -441,7 +565,7 @@ export function DoctorCasePage() {
     if (!token || !caseId) return
     const activeSession = Object.values(sessions).find((item) => item.status === 'active')
     if (!activeSession) {
-      messageApi.warning('没有可撤销授权的进行中监督会话')
+      messageApi.warning(t('没有可撤销授权的进行中监督会话'))
       return
     }
     setWorking(true)
@@ -455,10 +579,14 @@ export function DoctorCasePage() {
           reason: 'doctor_manual_revoke',
         },
       })
-      messageApi.success(`已撤销第 ${target.generation_round} 版的患者展示授权`)
+      messageApi.success(
+        language === 'en'
+          ? `Patient access to version ${target.generation_round} has been revoked`
+          : `${t('已撤销第')} ${target.generation_round} ${t('版的患者展示授权')}`,
+      )
       await loadCase()
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '授权撤销失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('授权撤销失败'))
     } finally {
       setWorking(false)
     }
@@ -467,9 +595,20 @@ export function DoctorCasePage() {
   const generationRunning = avatarVersions.some((item) =>
     ['queued', 'generating', 'checking'].includes(item.generation_status),
   )
+  const currentSession = invites
+    .map((invite) => (invite.session_id ? sessions[invite.session_id] : null))
+    .find((patientSession) =>
+      patientSession
+        ? !['ended', 'expired'].includes(patientSession.status)
+        : false,
+    )
+  const currentInviteRedeemed = Boolean(currentSession)
+  const currentSessionStarted = Boolean(currentSession?.started_at)
+  const currentVisualDirectionConfirmed = Boolean(currentSessionStarted && visualFeatures)
+  const currentAvatarReady = Boolean(currentSessionStarted && avatarVersions.length)
 
   if (loading) {
-    return <div className="route-fallback"><Spin size="large" tip="正在加载病例…" /></div>
+    return <div className="route-fallback"><Spin size="large" tip={t('正在加载病例…')} /></div>
   }
 
   return (
@@ -477,30 +616,33 @@ export function DoctorCasePage() {
       {messageContext}
       <header className="case-page__header">
         <Brand />
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/doctor/workspace')}>
-          返回工作台
-        </Button>
+        <div className="case-page__header-actions">
+          <LanguageSwitcher />
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/doctor/workspace')}>
+            {t('返回工作台')}
+          </Button>
+        </div>
       </header>
       <main className="case-page__content">
-        {error && <Alert type="error" showIcon message="病例暂时不可用" description={error} />}
+        {error && <Alert type="error" showIcon message={t('病例暂时不可用')} description={error} />}
         {clinicalCase && (
           <>
             <div className="case-page__title">
               <div>
-                <span className="eyebrow">去标识化病例</span>
+                <span className="eyebrow">{t('去标识化病例')}</span>
                 <h1>{clinicalCase.study_code}</h1>
-                <p>医生拥有和监督 · 患者端不可查看病例导航及历史记录</p>
+                <p>{t('集中管理患者会话、声音访谈、视觉表达审核与后续反馈。')}</p>
               </div>
               <Space>
                 <Tag color={clinicalCase.status === 'in_progress' ? 'processing' : 'default'}>
-                  {clinicalCase.status === 'draft' ? '草稿' : clinicalCase.status === 'in_progress' ? '进行中' : clinicalCase.status === 'completed' ? '已完成' : '已归档'}
+                  {t(clinicalCase.status === 'draft' ? '草稿' : clinicalCase.status === 'in_progress' ? '进行中' : clinicalCase.status === 'completed' ? '已完成' : '已归档')}
                 </Tag>
                 <Button
                   danger
                   disabled={clinicalCase.status === 'archived'}
                   onClick={() => setArchiveOpen(true)}
                 >
-                  归档病例
+                  {t('归档病例')}
                 </Button>
               </Space>
             </div>
@@ -511,17 +653,21 @@ export function DoctorCasePage() {
                 showIcon
                 message={
                   clinicalCase.status === 'archived'
-                    ? '病例已归档'
-                    : '该病例已恢复，但永久删除倒计时仍在继续'
+                    ? t('病例已归档')
+                    : t('该病例已恢复，但永久删除倒计时仍在继续')
                 }
-                description={`永久删除时间：${new Date(clinicalCase.retention_due_at).toLocaleString('zh-CN')}。恢复不会暂停或重置倒计时，旧患者会话也不会恢复。`}
+                description={
+                  language === 'en'
+                    ? `Permanent deletion: ${new Date(clinicalCase.retention_due_at).toLocaleString(dateLocale)}. Restoring the case does not pause or reset the countdown, and prior patient sessions remain closed.`
+                    : `${t('永久删除时间：')}${new Date(clinicalCase.retention_due_at).toLocaleString(dateLocale)}。${t('恢复不会暂停或重置倒计时，旧患者会话也不会恢复。')}`
+                }
               />
             )}
 
             <div className="case-detail-grid">
-              <Card title="监督会话与邀请码" className="case-session-card" extra={<Button type="primary" icon={<KeyOutlined />} disabled={clinicalCase.status === 'archived'} loading={working} onClick={() => void createInvite()}>创建邀请码</Button>}>
+              <Card title={t('患者会话与邀请码')} className="case-session-card" extra={<Button type="primary" icon={<KeyOutlined />} disabled={clinicalCase.status === 'archived'} loading={working} onClick={() => void createInvite()}>{t('创建邀请码')}</Button>}>
                 {invites.length === 0 ? (
-                  <Empty description="尚未创建邀请码" />
+                  <Empty description={t('尚未创建邀请码')} />
                 ) : (
                   <div className="invite-list">
                     {invites.map((invite) => {
@@ -532,21 +678,82 @@ export function DoctorCasePage() {
                             <span className="invite-list__icon"><KeyOutlined /></span>
                             <div>
                               <strong>{invite.code ?? invite.code_mask}</strong>
-                              <p>有效至 {new Date(invite.expires_at).toLocaleString('zh-CN')}</p>
+                              <p>
+                                {patientSession
+                                  ? patientSession.started_at
+                                    ? `${t('会话开始时间')} ${new Date(
+                                        patientSession.started_at,
+                                      ).toLocaleString(dateLocale)}`
+                                    : t('患者已兑换，等待会话开始')
+                                  : `${t('邀请码有效期至')} ${new Date(
+                                      invite.expires_at,
+                                    ).toLocaleString(dateLocale)}`}
+                              </p>
                             </div>
                           </div>
                           <div className="invite-list__actions">
-                            <Tag>{inviteLabels[invite.status]}</Tag>
-                            {invite.code && <Button type="text" icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(invite.code!)}>复制</Button>}
-                            {patientSession?.status === 'waiting_doctor' && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setStartTarget(patientSession)}>确认并开始</Button>}
-                            {patientSession?.status === 'paused' && <Button type="primary" icon={<PlayCircleOutlined />} loading={working} onClick={() => void controlSession(patientSession, 'resume')}>医生恢复</Button>}
-                            {patientSession?.status === 'active' && <Button icon={<FormOutlined />} onClick={() => navigate(`/doctor/cases/${caseId}/interview/${patientSession.session_id}`)}>录入 Q1–Q8</Button>}
-                            {patientSession?.status === 'active' && <Button danger icon={<StopOutlined />} loading={working} onClick={() => void controlSession(patientSession, 'stop')}>结束会话</Button>}
+                            <Tag>{t(inviteLabels[invite.status])}</Tag>
+                            {invite.code && <Button type="text" icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(invite.code!)}>{t('复制')}</Button>}
+                            {invite.status === 'issued' && (
+                              <Button
+                                danger
+                                type="text"
+                                icon={<CloseOutlined />}
+                                loading={working}
+                                onClick={() =>
+                                  Modal.confirm({
+                                    title: t('取消这个邀请码？'),
+                                    content: t('取消后，患者将无法使用该邀请码进入会话。'),
+                                    okText: t('确认取消'),
+                                    cancelText: t('返回'),
+                                    okButtonProps: { danger: true },
+                                    onOk: () => cancelInvite(invite),
+                                  })
+                                }
+                              >
+                                {t('取消邀请')}
+                              </Button>
+                            )}
+                            {patientSession?.status === 'waiting_doctor' && (
+                              <Button
+                                type="primary"
+                                icon={<PlayCircleOutlined />}
+                                onClick={() => {
+                                  setStartTarget(patientSession)
+                                  setAssessmentMode(
+                                    patientSession.has_prior_assessment
+                                      ? null
+                                      : 'new_assessment',
+                                  )
+                                }}
+                              >
+                                {t('确认并开始')}
+                              </Button>
+                            )}
+                            {patientSession?.status === 'paused' && <Button type="primary" icon={<PlayCircleOutlined />} loading={working} onClick={() => void controlSession(patientSession, 'resume')}>{t('医生恢复')}</Button>}
+                            {patientSession?.status === 'active'
+                              && patientSession.assessment_mode === 'new_assessment' && (
+                                <Button
+                                  icon={<FormOutlined />}
+                                  onClick={() =>
+                                    navigate(
+                                      `/doctor/cases/${caseId}/interview/${patientSession.session_id}`,
+                                    )
+                                  }
+                                >
+                                  {t('录入 Q1–Q8')}
+                                </Button>
+                              )}
+                            {patientSession?.status === 'active'
+                              && patientSession.assessment_mode === 'reuse_previous' && (
+                                <Tag color="success">{t('沿用上次记录')}</Tag>
+                              )}
+                            {patientSession?.status === 'active' && <Button danger icon={<StopOutlined />} loading={working} onClick={() => void controlSession(patientSession, 'stop')}>{t('结束会话')}</Button>}
                           </div>
                           {patientSession && (
                             <div className="session-inline-status">
                               {patientSession.status === 'paused' ? <PauseCircleOutlined /> : <ClockCircleOutlined />}
-                              <span>会话状态：{sessionLabels[patientSession.status]}</span>
+                              <span>{t('会话状态：')}{t(sessionLabels[patientSession.status])}</span>
                             </div>
                           )}
                         </article>
@@ -556,31 +763,74 @@ export function DoctorCasePage() {
                 )}
               </Card>
 
-              <Card title="本病例工作流" className="case-flow-card">
+              <Card title={t('当前流程')} className="case-flow-card">
                 <Timeline
                   items={[
-                    { color: 'green', dot: <CheckCircleOutlined />, children: '病例已创建并归属当前医生' },
-                    { color: invites.length ? 'green' : 'gray', children: '患者兑换一次性邀请码' },
-                    { color: Object.values(sessions).some((item) => item.started_at) ? 'green' : 'gray', children: '医生确认当面知情同意并启动' },
-                    { color: 'gray', children: '录入并确认 Q1–Q8 视觉映射' },
-                    { color: avatarVersions.length ? 'green' : 'gray', children: 'GPT Image 2 生成、图片安全检查与医生授权' },
+                    {
+                      color: 'green',
+                      dot: <span className="case-flow-dot case-flow-dot--complete" />,
+                      children: t('病例已创建并归属当前医生'),
+                    },
+                    {
+                      color: currentInviteRedeemed ? 'green' : 'gray',
+                      dot: (
+                        <span
+                          className={`case-flow-dot ${
+                            currentInviteRedeemed ? 'case-flow-dot--complete' : ''
+                          }`}
+                        />
+                      ),
+                      children: t('患者兑换一次性邀请码'),
+                    },
+                    {
+                      color: currentSessionStarted ? 'green' : 'gray',
+                      dot: (
+                        <span
+                          className={`case-flow-dot ${
+                            currentSessionStarted ? 'case-flow-dot--complete' : ''
+                          }`}
+                        />
+                      ),
+                      children: t('医生确认当面知情同意并启动'),
+                    },
+                    {
+                      color: currentVisualDirectionConfirmed ? 'green' : 'gray',
+                      dot: (
+                        <span
+                          className={`case-flow-dot ${
+                            currentVisualDirectionConfirmed ? 'case-flow-dot--complete' : ''
+                          }`}
+                        />
+                      ),
+                      children: t('记录声音体验并确认视觉表达方向'),
+                    },
+                    {
+                      color: currentAvatarReady ? 'green' : 'gray',
+                      dot: (
+                        <span
+                          className={`case-flow-dot ${
+                            currentAvatarReady ? 'case-flow-dot--complete' : ''
+                          }`}
+                        />
+                      ),
+                      children: t('生成视觉表达，完成安全检查与医生授权'),
+                    },
                   ]}
                 />
                 <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label="创建时间">{new Date(clinicalCase.created_at).toLocaleString('zh-CN')}</Descriptions.Item>
-                  <Descriptions.Item label="活动会话">{clinicalCase.active_session_count}</Descriptions.Item>
-                  <Descriptions.Item label="数据边界">不保存患者身份信息</Descriptions.Item>
+                  <Descriptions.Item label={t('创建时间')}>{new Date(clinicalCase.created_at).toLocaleString(dateLocale)}</Descriptions.Item>
+                  <Descriptions.Item label={t('累计会话')}>{clinicalCase.total_session_count}</Descriptions.Item>
                 </Descriptions>
               </Card>
             </div>
 
             <Card
               className="avatar-generation-card"
-              title="Avatar 生成与版本审核"
+              title={t('视觉表达生成与版本审核')}
               extra={
                 <Space wrap>
                   <Tag color={visualFeatures?.is_doctor_confirmed ? 'success' : 'warning'}>
-                    {visualFeatures?.is_doctor_confirmed ? '视觉特征已确认' : '等待确认视觉特征'}
+                    {t(visualFeatures?.is_doctor_confirmed ? '视觉特征已确认' : '等待确认视觉特征')}
                   </Tag>
                   <Button
                     type="primary"
@@ -594,10 +844,10 @@ export function DoctorCasePage() {
                     onClick={() => void generateAvatar(avatarVersions.length ? 'same_features_regenerate' : 'initial')}
                   >
                     {generationRunning
-                      ? '当前版本生成中'
+                      ? t('当前版本生成中')
                       : avatarVersions.length
-                        ? '按相同特征重新生成'
-                        : '生成首版 Avatar'}
+                        ? t('重新生成')
+                        : t('生成首版 Avatar')}
                   </Button>
                 </Space>
               }
@@ -606,19 +856,18 @@ export function DoctorCasePage() {
                 <Alert
                   type="info"
                   showIcon
-                  message="完成 Q1–Q8 映射并由医生确认后，才能提交生图任务"
-                  description="字段校验和声音到视觉映射不会自动触发生图。"
+                  message={t('完成声音访谈并确认视觉表达方向后，才能生成图像')}
                 />
               )}
               {avatarVersions.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无生成版本" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('尚无生成版本')} />
               ) : (
                 <div className="avatar-version-grid">
                   {avatarVersions.map((version) => (
                     <article className="avatar-version-card" key={version.version_id}>
                       <div className="avatar-version-card__preview">
                         {version.image_url ? (
-                          <img src={version.image_url} alt={`Avatar 第 ${version.generation_round} 版`} />
+                          <img src={version.image_url} alt={language === 'en' ? `Avatar version ${version.generation_round}` : `Avatar ${t('第')} ${version.generation_round} ${t('版')}`} />
                         ) : (
                           <div className="avatar-version-card__empty"><PictureOutlined /></div>
                         )}
@@ -626,7 +875,7 @@ export function DoctorCasePage() {
                       </div>
                       <div className="avatar-version-card__body">
                         <div className="avatar-version-card__title">
-                          <strong>第 {version.generation_round} 版</strong>
+                          <strong>{language === 'en' ? `Version ${version.generation_round}` : `${t('第')} ${version.generation_round} ${t('版')}`}</strong>
                           <Tag
                             color={
                               version.generation_status === 'approved'
@@ -638,11 +887,11 @@ export function DoctorCasePage() {
                                     : 'processing'
                             }
                           >
-                            {generationStatusLabels[version.generation_status]}
+                            {t(generationStatusLabels[version.generation_status])}
                           </Tag>
                         </div>
-                        <p>{version.provider_model} · {version.prompt_template_version}</p>
-                        {version.failure_code && <Alert type="warning" showIcon message={`失败代码：${version.failure_code}`} />}
+                        <p>{t('依据医生确认的视觉方向生成')}</p>
+                        {version.failure_code && <Alert type="warning" showIcon message={`${t('失败代码：')}${version.failure_code}`} />}
                         {['queued', 'generating', 'checking'].includes(version.generation_status) && (
                           <Button
                             danger
@@ -650,16 +899,16 @@ export function DoctorCasePage() {
                             loading={working}
                             onClick={() =>
                               Modal.confirm({
-                                title: `取消第 ${version.generation_round} 版生成？`,
-                                content: '已经生成但尚未采用的临时图片会被丢弃，不影响此前已审核版本。',
-                                okText: '确认取消',
-                                cancelText: '继续生成',
+                                title: language === 'en' ? `Cancel generation of version ${version.generation_round}?` : `${t('取消第')} ${version.generation_round} ${t('版生成？')}`,
+                                content: t('已经生成但尚未采用的临时图片会被丢弃，不影响此前已审核版本。'),
+                                okText: t('确认取消'),
+                                cancelText: t('继续生成'),
                                 okButtonProps: { danger: true },
                                 onOk: () => cancelGeneration(version),
                               })
                             }
                           >
-                            取消生成
+                            {t('取消生成')}
                           </Button>
                         )}
                         {version.generation_status === 'failed' && (
@@ -669,16 +918,16 @@ export function DoctorCasePage() {
                             disabled={generationRunning}
                             onClick={() => void generateAvatar('same_features_regenerate')}
                           >
-                            按相同特征重试
+                            {t('按相同特征重试')}
                           </Button>
                         )}
                         {version.generation_status === 'pending_doctor_review' && (
                           <Space wrap>
                             <Button type="primary" icon={<SafetyCertificateOutlined />} loading={working} onClick={() => void reviewAvatar(version, 'approve')}>
-                              审核通过
+                              {t('审核通过')}
                             </Button>
                             <Button danger icon={<CloseOutlined />} loading={working} onClick={() => void reviewAvatar(version, 'reject')}>
-                              拒绝此图
+                              {t('拒绝此图')}
                             </Button>
                           </Space>
                         )}
@@ -686,19 +935,19 @@ export function DoctorCasePage() {
                           <Space wrap>
                             {version.is_authorized ? (
                               <>
-                                <Tag color="success" icon={<CheckCircleOutlined />}>患者当前可见</Tag>
+                                <Tag color="success" icon={<CheckCircleOutlined />}>{t('患者当前可见')}</Tag>
                                 <Button
                                   danger
                                   icon={<StopOutlined />}
                                   loading={working}
                                   onClick={() => void revokeAuthorization(version)}
                                 >
-                                  撤销患者授权
+                                  {t('撤销患者授权')}
                                 </Button>
                               </>
                             ) : version.is_current_candidate ? (
                               <Button type="primary" icon={<CheckCircleOutlined />} loading={working} onClick={() => void authorizeVersion(version)}>
-                                授权患者查看
+                                {t('授权患者查看')}
                               </Button>
                             ) : (
                               <Button
@@ -706,24 +955,47 @@ export function DoctorCasePage() {
                                 loading={working}
                                 onClick={() =>
                                   Modal.confirm({
-                                    title: `回退到第 ${version.generation_round} 版？`,
-                                    content: '当前患者授权将立即撤销。该历史版本必须重新审核并再次授权后，患者才能查看。',
-                                    okText: '确认回退',
-                                    cancelText: '取消',
+                                    title: language === 'en' ? `Roll back to version ${version.generation_round}?` : `${t('回退到第')} ${version.generation_round} ${t('版？')}`,
+                                    content: t('当前患者授权将立即撤销。该历史版本必须重新审核并再次授权后，患者才能查看。'),
+                                    okText: t('确认回退'),
+                                    cancelText: t('取消'),
                                     okButtonProps: { danger: true },
                                     onOk: () => rollbackVersion(version),
                                   })
                                 }
                               >
-                                选择此版回退
+                                {t('选择此版回退')}
                               </Button>
                             )}
                             {version.snapshot_available && version.image_url && (
                               <Button icon={<DownloadOutlined />} loading={working} onClick={() => void downloadVersion(version)}>
-                                下载此版
+                                {t('下载此版')}
                               </Button>
                             )}
                           </Space>
+                        )}
+                        {['approved', 'rejected', 'failed', 'cancelled'].includes(version.generation_status) && (
+                          <Button
+                            danger
+                            icon={<DeleteOutlined />}
+                            loading={working}
+                            disabled={version.is_authorized}
+                            title={version.is_authorized ? t('患者当前正在查看，不能删除') : undefined}
+                            onClick={() =>
+                              Modal.confirm({
+                                title: language === 'en'
+                                  ? `Permanently delete version ${version.generation_round}?`
+                                  : `${t('永久删除第')} ${version.generation_round} ${t('版？')}`,
+                                content: t('删除后无法恢复。'),
+                                okText: t('确认永久删除'),
+                                cancelText: t('取消'),
+                                okButtonProps: { danger: true },
+                                onOk: () => deleteAvatarVersion(version),
+                              })
+                            }
+                          >
+                            {version.is_authorized ? t('患者查看中，禁止删除') : t('删除图像')}
+                          </Button>
                         )}
                       </div>
                     </article>
@@ -734,18 +1006,18 @@ export function DoctorCasePage() {
 
             <Card
               className="doctor-adjustment-card"
-              title="患者外观调整审核"
-              extra={<Tag>{adjustments?.used ?? 0} / {adjustments?.limit ?? 3} 次额度已使用</Tag>}
+              title={t('患者反馈与图像调整')}
+              extra={<Tag>{adjustments?.used ?? 0} / {adjustments?.limit ?? 3} {t('次额度已使用')}</Tag>}
             >
               {!adjustments || adjustments.items.length === 0 ? (
-                <Empty description="患者尚未提交调整建议" />
+                <Empty description={t('患者尚未提交调整建议')} />
               ) : (
                 <div className="doctor-adjustment-list">
                   {adjustments.items.map((item) => (
                     <article key={item.request_id}>
                       <div className="doctor-adjustment-list__meta">
                         <span>
-                          第 {item.sequence_no} 次 · {new Date(item.submitted_at).toLocaleString('zh-CN')}
+                          {language === 'en' ? `Request ${item.sequence_no}` : `${t('第')} ${item.sequence_no} ${t('次')}`} · {new Date(item.submitted_at).toLocaleString(dateLocale)}
                         </span>
                         <Tag
                           color={
@@ -756,14 +1028,27 @@ export function DoctorCasePage() {
                                 : 'blue'
                           }
                         >
-                          {adjustmentStatusLabels[item.status]}
+                          {t(adjustmentStatusLabels[item.status])}
                         </Tag>
                       </div>
                       <blockquote>{item.instruction}</blockquote>
                       {item.controlled_instruction && (
                         <div className="controlled-instruction">
-                          <SafetyCertificateOutlined /> 受控指令：{item.controlled_instruction}
+                          <SafetyCertificateOutlined /> {t('受控指令：')}{item.controlled_instruction}
                         </div>
+                      )}
+                      {item.status === 'pending_doctor_review' && (
+                        <div className="controlled-instruction controlled-instruction--suggested">
+                          <SafetyCertificateOutlined /> {t('系统建议受控指令：')}{item.suggested_controlled_instruction}
+                        </div>
+                      )}
+                      {item.status === 'rejected' && item.rejection_reason && (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={t('拒绝理由')}
+                          description={item.rejection_reason}
+                        />
                       )}
                       {item.status === 'pending_doctor_review' && (
                         <Space wrap>
@@ -773,24 +1058,18 @@ export function DoctorCasePage() {
                             loading={working}
                             onClick={() => void reviewAdjustment(item, 'approve_as_is')}
                           >
-                            接受并转换为受控指令
-                          </Button>
-                          <Button
-                            icon={<FormOutlined />}
-                            onClick={() => {
-                              setEditTarget(item)
-                              setControlledInstruction(adjustments.controlled_options[0] ?? null)
-                            }}
-                          >
-                            选择受控调整后接受
+                            {t('接受系统研判')}
                           </Button>
                           <Button
                             danger
                             icon={<CloseOutlined />}
                             loading={working}
-                            onClick={() => void reviewAdjustment(item, 'reject')}
+                            onClick={() => {
+                              setRejectTarget(item)
+                              setRejectionReason('')
+                            }}
                           >
-                            拒绝
+                            {t('拒绝')}
                           </Button>
                         </Space>
                       )}
@@ -801,7 +1080,7 @@ export function DoctorCasePage() {
                           loading={working}
                           onClick={() => void generateAdjustment(item)}
                         >
-                          生成受控调整版本
+                          {t('生成受控调整版本')}
                         </Button>
                       )}
                     </article>
@@ -813,49 +1092,107 @@ export function DoctorCasePage() {
         )}
       </main>
 
-      <Modal title="确认已完成当面知情同意" open={Boolean(startTarget)} onCancel={() => setStartTarget(null)} okText="确认并启动会话" okButtonProps={{ disabled: !consentConfirmed, loading: working }} onOk={() => startTarget && void controlSession(startTarget, 'start')}>
-        <Alert type="info" showIcon icon={<SafetyCertificateOutlined />} message="该确认由当前医生完成" description="系统只保存确认医生、确认时间和同意文本版本，不要求患者在线签名。" />
+      <Modal
+        title={t('确认已完成当面知情同意')}
+        open={Boolean(startTarget)}
+        onCancel={() => {
+          setStartTarget(null)
+          setConsentConfirmed(false)
+          setAssessmentMode(null)
+        }}
+        okText={t('确认并启动会话')}
+        cancelText={t('取消')}
+        okButtonProps={{
+          disabled:
+            !consentConfirmed
+            || (Boolean(startTarget?.has_prior_assessment) && !assessmentMode),
+          loading: working,
+        }}
+        onOk={() => startTarget && void controlSession(startTarget, 'start')}
+      >
+        <Alert type="info" showIcon icon={<SafetyCertificateOutlined />} message={t('该确认由当前医生完成')} description={t('系统只保存确认医生、确认时间和同意文本版本，不要求患者在线签名。')} />
+        {startTarget?.has_prior_assessment ? (
+          <div className="session-assessment-choice">
+            <strong>{t('选择本次会话的评估方式')}</strong>
+            <Radio.Group
+              value={assessmentMode}
+              onChange={(event) => setAssessmentMode(event.target.value)}
+            >
+              <Radio value="reuse_previous">
+                <span>
+                  <strong>{t('沿用上次记录，继续本次会话')}</strong>
+                  <small>
+                    {t('保留上次完整的 Q1–Q8 与视觉方向，直接继续查看和讨论。')}
+                  </small>
+                </span>
+              </Radio>
+              <Radio value="new_assessment">
+                <span>
+                  <strong>{t('重新评估 Q1–Q8')}</strong>
+                  <small>
+                    {t('为本次会话建立一份新记录，既往记录和图像不会被覆盖。')}
+                  </small>
+                </span>
+              </Radio>
+            </Radio.Group>
+          </div>
+        ) : (
+          <Alert
+            className="session-first-assessment"
+            type="success"
+            showIcon
+            message={t('首次会话需要完成 Q1–Q8')}
+            description={t('完成后，这份记录可在后续会话中沿用。')}
+          />
+        )}
         <Checkbox className="consent-check" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)}>
-          我已在现场向患者说明研究用途、展示边界和安全暂停方式，并确认其同意继续。
+          {t('我已在现场向患者说明研究用途、展示边界和安全暂停方式，并确认其同意继续。')}
         </Checkbox>
       </Modal>
 
       <Modal
-        title="选择受控调整后接受"
-        open={Boolean(editTarget)}
-        onCancel={() => {
-          setEditTarget(null)
-          setControlledInstruction(null)
+        title={t('填写拒绝理由')}
+        open={Boolean(rejectTarget)}
+        okText={t('确认拒绝')}
+        cancelText={t('取消')}
+        okButtonProps={{
+          danger: true,
+          disabled: rejectionReason.trim().length < 2,
+          loading: working,
         }}
-        okText="确认接受"
-        okButtonProps={{ disabled: !controlledInstruction, loading: working }}
-        onOk={() => editTarget && void reviewAdjustment(editTarget, 'approve_edited')}
+        onCancel={() => {
+          setRejectTarget(null)
+          setRejectionReason('')
+        }}
+        onOk={() => {
+          if (rejectTarget) void reviewAdjustment(rejectTarget, 'reject', rejectionReason)
+        }}
       >
         <Alert
           type="info"
           showIcon
-          message="患者原文不会进入图像模型"
-          description="请选择一条低刺激受控指令。后续仅该指令可进入生图流程。"
+          message={t('请用简短、清晰且适合患者阅读的语言说明原因')}
+          description={t('患者端会显示该理由；请勿填写诊断结论或不必要的身份信息。')}
         />
-        <Select
-          className="controlled-instruction-select"
-          value={controlledInstruction}
-          options={(adjustments?.controlled_options ?? []).map((option) => ({
-            value: option,
-            label: option,
-          }))}
-          onChange={setControlledInstruction}
+        <Input.TextArea
+          aria-label={t('拒绝理由')}
+          value={rejectionReason}
+          onChange={(event) => setRejectionReason(event.target.value)}
+          placeholder={t('例如：本次建议与已确认的低刺激视觉方向不一致，请在现场与医生进一步讨论。')}
+          autoSize={{ minRows: 4, maxRows: 7 }}
+          maxLength={300}
+          showCount
         />
       </Modal>
 
-      <Modal title="归档病例" open={archiveOpen} onCancel={() => setArchiveOpen(false)} okText="确认归档" okButtonProps={{ danger: true, loading: working }} onOk={() => void archiveCase()}>
-        <p>归档会立即结束所有患者会话，并从现在起启动 30 天永久删除倒计时。</p>
+      <Modal title={t('归档病例')} open={archiveOpen} onCancel={() => setArchiveOpen(false)} okText={t('确认归档')} cancelText={t('取消')} okButtonProps={{ danger: true, loading: working }} onOk={() => void archiveCase()}>
+        <p>{t('归档会立即结束所有患者会话，并从现在起启动 30 天永久删除倒计时。')}</p>
       </Modal>
 
-      <Modal title="一次性患者邀请码" open={Boolean(createdInvite)} onCancel={() => setCreatedInvite(null)} footer={<Button type="primary" onClick={() => setCreatedInvite(null)}>完成</Button>}>
-        <Alert type="success" showIcon message="邀请码已创建" description="仅在现场监督会话中提供；兑换后不能再次使用。" />
+      <Modal title={t('一次性患者邀请码')} open={Boolean(createdInvite)} onCancel={() => setCreatedInvite(null)} footer={<Button type="primary" onClick={() => setCreatedInvite(null)}>{t('完成')}</Button>}>
+        <Alert type="success" showIcon message={t('邀请码已创建')} description={t('仅在现场监督会话中提供；兑换后不能再次使用。')} />
         <div className="invite-code-display">{createdInvite?.code}</div>
-        <Button block icon={<CopyOutlined />} onClick={() => createdInvite?.code && navigator.clipboard.writeText(createdInvite.code)}>复制邀请码</Button>
+        <Button block icon={<CopyOutlined />} onClick={() => createdInvite?.code && navigator.clipboard.writeText(createdInvite.code)}>{t('复制邀请码')}</Button>
       </Modal>
     </div>
   )

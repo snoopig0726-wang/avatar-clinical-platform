@@ -130,6 +130,7 @@ export type ClinicalCase = {
   archived_at: string | null
   retention_due_at: string | null
   active_session_count: number
+  total_session_count: number
 }
 
 export type CaseListResponse = {
@@ -157,6 +158,8 @@ export type PatientSession = {
   study_code: string | null
   status: 'waiting_doctor' | 'active' | 'paused' | 'ended' | 'expired'
   stage: string
+  assessment_mode: 'new_assessment' | 'reuse_previous'
+  has_prior_assessment: boolean
   adjustments: { used: number; limit: number; has_pending: boolean }
   created_at: string
   started_at: string | null
@@ -220,7 +223,9 @@ export type AdjustmentStatus =
 export type PatientAdjustment = {
   request_id: string
   sequence_no: number
+  instruction: string
   status: AdjustmentStatus
+  rejection_reason: string | null
   submitted_at: string
   reviewed_at: string | null
 }
@@ -239,8 +244,9 @@ export type SubmitAdjustmentResponse = PatientAdjustment & {
 }
 
 export type DoctorAdjustment = PatientAdjustment & {
-  instruction: string
   controlled_instruction: string | null
+  suggested_controlled_instruction: string
+  controlled_options: string[]
 }
 
 export type DoctorAdjustmentList = {
@@ -298,6 +304,12 @@ export type AvatarVersion = {
 }
 
 export type AvatarVersionList = { items: AvatarVersion[] }
+
+export type DeleteAvatarVersionResponse = {
+  version_id: string
+  generation_round: number
+  deleted: true
+}
 
 export type AdminDoctor = {
   user_id: string
@@ -365,12 +377,19 @@ export type AdminAuditList = {
 
 export type AdminArchivedCase = {
   case_id: string
+  study_code: string
   archived_at: string
   retention_due_at: string
   restorable: boolean
 }
 
 export type AdminArchivedCaseList = { items: AdminArchivedCase[] }
+
+export type DeleteArchivedCaseResponse = {
+  case_id: string
+  retention_job_id: string
+  status: 'scheduled' | 'running'
+}
 
 export type RetentionJob = {
   retention_job_id: string

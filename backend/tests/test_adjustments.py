@@ -13,8 +13,18 @@ from app.domain.enums import ApprovalStatus, Role
 from app.main import app
 from app.models import AdjustmentRequest, AuditLog, Base, ClinicalCase, PatientSession, StaffUser
 from app.security.crypto import derive_patient_token, hash_password
+from app.services.adjustments import build_controlled_instruction, build_controlled_options
 from app.services.example_data import seed_example_data
 from app.services.risk_engine import evaluate_adjustment_text, seed_default_risk_rules
+
+
+def test_controlled_instruction_preserves_patient_direction() -> None:
+    controlled = build_controlled_instruction("再老一点，可怕一点。")
+
+    assert "年龄感" in controlled
+    assert "令人不安" in controlled
+    assert "柔化面部" not in controlled
+    assert controlled == build_controlled_options("再老一点，可怕一点。")[0]
 
 
 @pytest.mark.asyncio
@@ -39,6 +49,10 @@ async def test_risk_matching_semantics(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
     settings = get_settings()
+    original_model_provider = settings.model_provider
+    original_semantic_safety_provider = settings.semantic_image_safety_provider
+    settings.model_provider = "mock"
+    settings.semantic_image_safety_provider = "mock"
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'adjustments.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -114,7 +128,9 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
                 headers=patient_headers,
             )
             assert patient_list.json()["used"] == 1
-            assert "instruction" not in patient_list.json()["items"][0]
+            assert (
+                patient_list.json()["items"][0]["instruction"] == "希望表情更平静，减少阴影和紧张感"
+            )
 
             doctor_list = await client.get(
                 f"/api/cases/{case_id}/adjustment-requests", headers=doctor_headers
@@ -122,12 +138,37 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             first = doctor_list.json()["items"][0]
             assert "更平静" in first["instruction"]
 
+            missing_reason = await client.post(
+                f"/api/adjustment-requests/{first['request_id']}/review",
+                headers={
+                    **doctor_headers,
+                    "Idempotency-Key": "reject-first-missing-reason",
+                },
+                json={"decision": "reject"},
+            )
+            assert missing_reason.status_code == 422
+
             rejected = await client.post(
                 f"/api/adjustment-requests/{first['request_id']}/review",
                 headers={**doctor_headers, "Idempotency-Key": "reject-first"},
-                json={"decision": "reject"},
+                json={
+                    "decision": "reject",
+                    "rejection_reason": "本次建议与已确认的低刺激视觉方向不一致。",
+                },
             )
             assert rejected.json()["status"] == "rejected"
+            assert (
+                rejected.json()["rejection_reason"]
+                == "本次建议与已确认的低刺激视觉方向不一致。"
+            )
+            patient_rejected = await client.get(
+                f"/api/patient-sessions/{session_id}/adjustment-requests",
+                headers=patient_headers,
+            )
+            assert (
+                patient_rejected.json()["items"][0]["rejection_reason"]
+                == "本次建议与已确认的低刺激视觉方向不一致。"
+            )
 
             second_headers = {**patient_headers, "Idempotency-Key": "safe-second"}
             second = await client.post(
@@ -148,7 +189,10 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             await client.post(
                 f"/api/adjustment-requests/{second.json()['request_id']}/review",
                 headers={**doctor_headers, "Idempotency-Key": "reject-second"},
-                json={"decision": "reject"},
+                json={
+                    "decision": "reject",
+                    "rejection_reason": "请在下一次现场会话中进一步说明希望调整的部分。",
+                },
             )
             third = await client.post(
                 f"/api/patient-sessions/{session_id}/adjustment-requests",
@@ -219,4 +263,6 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             assert "自残" not in str(blocked_audit.metadata_json)
     finally:
         app.dependency_overrides.clear()
+        settings.model_provider = original_model_provider
+        settings.semantic_image_safety_provider = original_semantic_safety_provider
         await engine.dispose()

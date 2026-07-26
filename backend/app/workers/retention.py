@@ -4,7 +4,7 @@ import asyncio
 
 from app.adapters.storage import get_object_storage
 from app.config.settings import get_settings
-from app.database import get_session_factory
+from app.database import get_isolated_db_session
 from app.services.retention import process_due_retention_jobs
 from app.workers.celery_app import celery_app
 
@@ -19,7 +19,7 @@ def process_due_cases() -> dict[str, int]:
             count = await asyncio.to_thread(storage.delete_prefix, f"cases/{case_id}")
             return {"object_files": count, "backup_records": 0}
 
-        async with get_session_factory(settings.database_url)() as session:
+        async with get_isolated_db_session(settings.database_url) as session:
             return await process_due_retention_jobs(session, object_cleanup=cleanup)
 
     return asyncio.run(run())

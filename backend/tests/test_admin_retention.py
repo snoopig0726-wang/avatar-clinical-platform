@@ -45,7 +45,9 @@ def staff_user(
 
 
 @pytest.mark.asyncio
-async def test_admin_access_rules_audit_and_restore(tmp_path) -> None:
+async def test_admin_access_rules_audit_restore_and_permanent_delete(
+    tmp_path,
+) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'admin.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -70,6 +72,7 @@ async def test_admin_access_rules_audit_and_restore(tmp_path) -> None:
             yield session
 
     app.dependency_overrides[get_db_session] = override_session
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             admin_login = await client.post(
@@ -147,7 +150,7 @@ async def test_admin_access_rules_audit_and_restore(tmp_path) -> None:
             archived_item = next(
                 item for item in archived_cases.json()["items"] if item["case_id"] == case_id
             )
-            assert "study_code" not in archived_item
+            assert archived_item["study_code"] == "ADMIN-RESTORE-001"
             restored = await client.post(
                 f"/api/admin/cases/{case_id}/restore",
                 headers={**admin_headers, "Idempotency-Key": "admin-case-restore"},
@@ -169,6 +172,56 @@ async def test_admin_access_rules_audit_and_restore(tmp_path) -> None:
             ).replace(tzinfo=None) == datetime.fromisoformat(
                 original_due.replace("Z", "+00:00")
             ).replace(tzinfo=None)
+            invalid_delete = await client.post(
+                f"/api/admin/cases/{case_id}/permanent-delete",
+                headers={
+                    **admin_headers,
+                    "Idempotency-Key": "admin-case-invalid-delete",
+                },
+                json={"confirmation": "DELETE"},
+            )
+            assert invalid_delete.status_code == 422
+            delete_headers = {
+                **admin_headers,
+                "Idempotency-Key": "admin-case-permanent-delete",
+            }
+            permanently_deleted = await client.post(
+                f"/api/admin/cases/{case_id}/permanent-delete",
+                headers=delete_headers,
+                json={
+                    "confirmation": "PERMANENTLY_DELETE_ARCHIVED_CASE",
+                    "reason": "test_cleanup",
+                },
+            )
+            assert permanently_deleted.status_code == 202
+            assert permanently_deleted.json()["status"] == "scheduled"
+            assert permanently_deleted.json()["retention_job_id"]
+
+            async with factory() as retention_session:
+                deletion_result = await process_due_retention_jobs(retention_session)
+                assert deletion_result == {
+                    "processed": 1,
+                    "completed": 1,
+                    "retrying": 0,
+                    "failed": 0,
+                }
+
+            replayed_delete = await client.post(
+                f"/api/admin/cases/{case_id}/permanent-delete",
+                headers=delete_headers,
+                json={
+                    "confirmation": "PERMANENTLY_DELETE_ARCHIVED_CASE",
+                    "reason": "test_cleanup",
+                },
+            )
+            assert replayed_delete.json() == permanently_deleted.json()
+            remaining_archived = await client.get(
+                "/api/admin/archived-cases", headers=admin_headers
+            )
+            assert all(
+                item["case_id"] != case_id
+                for item in remaining_archived.json()["items"]
+            )
 
             stats = await client.get("/api/admin/stats", headers=admin_headers)
             assert stats.status_code == 200
@@ -183,6 +236,10 @@ async def test_admin_access_rules_audit_and_restore(tmp_path) -> None:
             assert "study_code" not in serialized
             assert "submitted_text" not in serialized
             assert all("case_id" not in item for item in audits.json()["items"])
+            assert any(
+                item["action"] == "retention.case_permanently_deleted"
+                for item in audits.json()["items"]
+            )
     finally:
         app.dependency_overrides.clear()
         await engine.dispose()
@@ -290,5 +347,59 @@ async def test_due_retention_deletes_case_data_and_retries_failures(tmp_path) ->
         assert await session.get(ClinicalCase, failing_case.case_id) is not None
         assert refreshed.attempt_count == 3
         assert refreshed.last_error_code == "RETENTION_DEPENDENCY_OR_DELETE_FAILED"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_running_manual_delete_is_recovered_and_run_immediately(tmp_path) -> None:
+    settings = get_settings()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stale-retention.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    async with factory() as session:
+        doctor = staff_user("stale-retention@example.com", Role.DOCTOR)
+        session.add(doctor)
+        await session.flush()
+        case = ClinicalCase(
+            owner_doctor_id=doctor.user_id,
+            study_code="STALE-RETENTION-001",
+            status=CaseStatus.ARCHIVED,
+            archived_at=now - timedelta(days=1),
+            retention_started_at=now - timedelta(days=1),
+            retention_due_at=now + timedelta(days=29),
+            created_at=now - timedelta(days=1),
+            updated_at=now,
+        )
+        session.add(case)
+        await session.flush()
+        job = RetentionJob(
+            case_id=case.case_id,
+            case_reference_hash=hash_secret(
+                str(case.case_id), settings.secret_key, "retention-case-reference"
+            ),
+            retention_started_at=case.retention_started_at,
+            retention_due_at=case.retention_due_at,
+            status=RetentionStatus.RUNNING,
+            attempt_count=1,
+            last_attempt_at=now - timedelta(minutes=10),
+        )
+        session.add(job)
+        await session.commit()
+        case_id = case.case_id
+        job_id = job.retention_job_id
+
+        result = await process_due_retention_jobs(session, now=now)
+
+        assert result == {"processed": 1, "completed": 1, "retrying": 0, "failed": 0}
+        assert await session.get(ClinicalCase, case_id) is None
+        completed = await session.get(RetentionJob, job_id)
+        assert completed is not None
+        assert completed.status == RetentionStatus.COMPLETED
+        assert completed.attempt_count == 2
+        assert completed.last_error_code is None
 
     await engine.dispose()

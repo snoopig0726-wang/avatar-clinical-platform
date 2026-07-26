@@ -34,10 +34,12 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
     original_image_dir = settings.local_image_dir
     original_dispatch_mode = settings.generation_dispatch_mode
     original_model_provider = settings.model_provider
+    original_semantic_safety_provider = settings.semantic_image_safety_provider
     settings.storage_provider = "local"
     settings.local_image_dir = str(tmp_path / "images")
     settings.generation_dispatch_mode = "inline"
     settings.model_provider = "mock"
+    settings.semantic_image_safety_provider = "mock"
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'versions.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -118,6 +120,46 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
             )
             assert authorized.status_code == 200
             assert authorized.json()["is_authorized"] is True
+
+            protected_delete = await client.post(
+                f"/api/avatar-versions/{generated_id}/delete",
+                headers={**doctor_headers, "Idempotency-Key": "delete-authorized-version"},
+                json={"confirmation": "DELETE_UNAUTHORIZED_AVATAR_VERSION"},
+            )
+            assert protected_delete.status_code == 409
+            assert (
+                protected_delete.json()["error"]["code"]
+                == "AUTHORIZED_VERSION_DELETE_FORBIDDEN"
+            )
+
+            reject_candidate = await client.post(
+                f"/api/cases/{case_id}/avatar-generations",
+                headers={**doctor_headers, "Idempotency-Key": "generate-rejected-version"},
+                json={"mode": "same_features_regenerate"},
+            )
+            assert reject_candidate.status_code == 202
+            rejected_id = reject_candidate.json()["version_id"]
+            rejected = await client.post(
+                f"/api/avatar-versions/{rejected_id}/review",
+                headers={**doctor_headers, "Idempotency-Key": "reject-and-delete-version"},
+                json={"decision": "reject"},
+            )
+            assert rejected.status_code == 200
+            assert rejected.json()["generation_status"] == "rejected"
+            assert rejected.json()["image_url"] is None
+            rejected_replay = await client.post(
+                f"/api/avatar-versions/{rejected_id}/review",
+                headers={**doctor_headers, "Idempotency-Key": "reject-and-delete-version"},
+                json={"decision": "reject"},
+            )
+            assert rejected_replay.status_code == 200
+            assert rejected_replay.json() == rejected.json()
+            remaining = await client.get(
+                f"/api/cases/{case_id}/avatar-versions", headers=doctor_headers
+            )
+            assert rejected_id not in {
+                item["version_id"] for item in remaining.json()["items"]
+            }
 
             changed = await client.put(
                 f"/api/sessions/{session_id}/voice-features/voice_gender",
@@ -203,6 +245,37 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
             )
             assert hidden_after_revoke.status_code == 409
 
+            async with factory() as verification_session:
+                generated_before_delete = await verification_session.get(
+                    AvatarVersion, UUID(generated_id)
+                )
+                assert generated_before_delete is not None
+                assert generated_before_delete.semantic_safety_provider == "mock"
+                assert generated_before_delete.semantic_safety_model == "mock-semantic-safety-v1"
+                assert generated_before_delete.semantic_safety_categories_json == []
+
+            deleted = await client.post(
+                f"/api/avatar-versions/{generated_id}/delete",
+                headers={**doctor_headers, "Idempotency-Key": "delete-revoked-version"},
+                json={
+                    "confirmation": "DELETE_UNAUTHORIZED_AVATAR_VERSION",
+                    "reason": "lifecycle_test",
+                },
+            )
+            assert deleted.status_code == 200
+            assert deleted.json()["deleted"] is True
+            assert deleted.json()["version_id"] == generated_id
+            deleted_replay = await client.post(
+                f"/api/avatar-versions/{generated_id}/delete",
+                headers={**doctor_headers, "Idempotency-Key": "delete-revoked-version"},
+                json={
+                    "confirmation": "DELETE_UNAUTHORIZED_AVATAR_VERSION",
+                    "reason": "lifecycle_test",
+                },
+            )
+            assert deleted_replay.status_code == 200
+            assert deleted_replay.json() == deleted.json()
+
         async with factory() as session:
             generated_version = await session.get(AvatarVersion, UUID(generated_id))
             download_audit = await session.scalar(
@@ -211,10 +284,7 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
             rollback_audit = await session.scalar(
                 select(AuditLog).where(AuditLog.action == "avatar.rollback_requested")
             )
-            assert generated_version is not None
-            assert generated_version.semantic_safety_provider == "mock"
-            assert generated_version.semantic_safety_model == "mock-semantic-safety-v1"
-            assert generated_version.semantic_safety_categories_json == []
+            assert generated_version is None
             assert download_audit is not None
             assert rollback_audit is not None
     finally:
@@ -223,4 +293,5 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
         settings.local_image_dir = original_image_dir
         settings.generation_dispatch_mode = original_dispatch_mode
         settings.model_provider = original_model_provider
+        settings.semantic_image_safety_provider = original_semantic_safety_provider
         await engine.dispose()

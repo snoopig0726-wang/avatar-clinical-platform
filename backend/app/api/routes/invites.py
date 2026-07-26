@@ -141,7 +141,10 @@ async def list_invites(
     invites = (
         await session.scalars(
             select(SessionInvite)
-            .where(SessionInvite.case_id == case_id)
+            .where(
+                SessionInvite.case_id == case_id,
+                SessionInvite.status != InviteStatus.REVOKED,
+            )
             .order_by(SessionInvite.created_at.desc())
         )
     ).all()
@@ -160,7 +163,7 @@ async def list_invites(
         items=[
             invite_response(
                 invite,
-                include_code=invite.status == InviteStatus.ISSUED,
+                include_code=True,
                 session_id=session_ids.get(invite.invite_id),
             )
             for invite in invites

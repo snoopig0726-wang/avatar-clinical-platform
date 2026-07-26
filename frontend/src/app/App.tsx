@@ -1,6 +1,8 @@
 import { lazy, Suspense, type ComponentType } from 'react'
 import { Route, Routes } from 'react-router-dom'
 
+import { useLanguage } from '../i18n/LanguageProvider'
+
 function loadNamed<T extends Record<string, ComponentType>>(
   loader: () => Promise<T>,
   name: keyof T,
@@ -42,6 +44,7 @@ const AdminDashboardPage = loadNamed(
 const NotFoundPage = loadNamed(() => import('../pages/NotFoundPage'), 'NotFoundPage')
 
 function RouteFallback() {
+  const { t } = useLanguage()
   return (
     <div className="route-fallback" role="status" aria-live="polite">
       <span className="route-fallback__mark">
@@ -49,30 +52,32 @@ function RouteFallback() {
         <i />
         <i />
       </span>
-      <p>正在安全加载页面…</p>
+      <p>{t('正在安全加载页面…')}</p>
     </div>
   )
 }
 
 export function App() {
   return (
-    <Suspense fallback={<RouteFallback />}>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/doctor/login" element={<DoctorLoginPage />} />
-        <Route path="/doctor/apply" element={<DoctorApplicationPage />} />
-        <Route path="/doctor/workspace" element={<DoctorWorkspacePage />} />
-        <Route path="/doctor/cases/:caseId" element={<DoctorCasePage />} />
-        <Route
-          path="/doctor/cases/:caseId/interview/:sessionId"
-          element={<DoctorInterviewPage />}
-        />
-        <Route path="/patient/invite" element={<PatientInvitePage />} />
-        <Route path="/patient/session/:sessionId" element={<PatientWaitingPage />} />
-        <Route path="/admin/login" element={<AdminLoginPage />} />
-        <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </Suspense>
+    <div className="localized-app">
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/doctor/login" element={<DoctorLoginPage />} />
+          <Route path="/doctor/apply" element={<DoctorApplicationPage />} />
+          <Route path="/doctor/workspace" element={<DoctorWorkspacePage />} />
+          <Route path="/doctor/cases/:caseId" element={<DoctorCasePage />} />
+          <Route
+            path="/doctor/cases/:caseId/interview/:sessionId"
+            element={<DoctorInterviewPage />}
+          />
+          <Route path="/patient/invite" element={<PatientInvitePage />} />
+          <Route path="/patient/session/:sessionId" element={<PatientWaitingPage />} />
+          <Route path="/admin/login" element={<AdminLoginPage />} />
+          <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
+    </div>
   )
 }

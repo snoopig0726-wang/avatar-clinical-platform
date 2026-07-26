@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import zipfile
@@ -7,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.storage import get_object_storage
@@ -37,6 +38,8 @@ from app.schemas.avatars import (
     AvatarVersionResponse,
     CancelAvatarGenerationRequest,
     CreateAvatarGenerationRequest,
+    DeleteAvatarVersionRequest,
+    DeleteAvatarVersionResponse,
     ReviewAvatarRequest,
     RevokeAvatarAuthorizationRequest,
     RevokeAvatarAuthorizationResponse,
@@ -90,6 +93,55 @@ async def _is_authorized(session: AsyncSession, version_id: UUID) -> bool:
         )
     )
     return authorization is not None
+
+
+async def _delete_avatar_version(
+    session: AsyncSession,
+    version: AvatarVersion,
+) -> None:
+    """Remove one non-authorized version and keep the case candidate chain usable."""
+    if await _is_authorized(session, version.version_id):
+        raise ApiError(
+            409,
+            "AUTHORIZED_VERSION_DELETE_FORBIDDEN",
+            "患者当前正在查看该版本，请先撤销患者授权",
+        )
+
+    image_object_key = version.image_object_key
+    if image_object_key:
+        try:
+            await asyncio.to_thread(
+                get_object_storage(get_settings()).delete,
+                image_object_key,
+            )
+        except Exception as exc:
+            raise ApiError(
+                503,
+                "STORAGE_UNAVAILABLE",
+                "图像文件暂时无法删除，请稍后重试",
+            ) from exc
+
+    await session.execute(
+        delete(SessionAvatarAuthorization).where(
+            SessionAvatarAuthorization.version_id == version.version_id
+        )
+    )
+
+    if version.is_current_candidate:
+        replacement = await session.scalar(
+            select(AvatarVersion)
+            .where(
+                AvatarVersion.case_id == version.case_id,
+                AvatarVersion.version_id != version.version_id,
+                AvatarVersion.generation_status == GenerationStatus.APPROVED,
+            )
+            .order_by(AvatarVersion.generation_round.desc())
+            .limit(1)
+        )
+        if replacement is not None:
+            replacement.is_current_candidate = True
+
+    await session.delete(version)
 
 
 async def _dispatch_generation(session: AsyncSession, version: AvatarVersion) -> None:
@@ -399,12 +451,6 @@ async def review_version(
     staff: AuthenticatedStaff = Depends(require_doctor),
     session: AsyncSession = Depends(get_db_session),
 ) -> AvatarVersionResponse:
-    version = await session.get(AvatarVersion, version_id)
-    if version is None:
-        raise ApiError(404, "RESOURCE_NOT_FOUND", "Avatar 版本不存在或无权访问")
-    await owned_case_or_404(
-        session, version.case_id, staff.user.user_id, for_update=True
-    )
     scope = f"doctor:{staff.user.user_id}:avatar:{version_id}"
     request_payload = payload.model_dump(mode="json")
     existing = await find_idempotency(
@@ -413,6 +459,15 @@ async def review_version(
         operation="review_avatar_version",
         key=idempotency_key,
         payload=request_payload,
+    )
+    if existing and existing.response_snapshot:
+        return AvatarVersionResponse(**existing.response_snapshot)
+
+    version = await session.get(AvatarVersion, version_id)
+    if version is None:
+        raise ApiError(404, "RESOURCE_NOT_FOUND", "Avatar 版本不存在或无权访问")
+    await owned_case_or_404(
+        session, version.case_id, staff.user.user_id, for_update=True
     )
     if existing:
         return avatar_response(
@@ -435,13 +490,18 @@ async def review_version(
                 adjustment.doctor_status = AdjustmentStatus.GENERATION_FAILED
     version.doctor_reviewed_by = staff.user.user_id
     version.doctor_reviewed_at = now
+    response = avatar_response(version)
+    if payload.decision == "reject":
+        response = response.model_copy(update={"image_url": None})
+        await _delete_avatar_version(session, version)
     add_idempotency(
         session,
         actor_scope=scope,
         operation="review_avatar_version",
         key=idempotency_key,
         payload=request_payload,
-        resource_id=version.version_id,
+        resource_id=None if payload.decision == "reject" else version.version_id,
+        response_snapshot=response.model_dump(mode="json"),
     )
     add_audit(
         session,
@@ -449,10 +509,104 @@ async def review_version(
         actor_user_id=staff.user.user_id,
         case_id=version.case_id,
         action="avatar.reviewed",
-        metadata={"decision": payload.decision, "round": version.generation_round},
+        metadata={
+            "decision": payload.decision,
+            "round": version.generation_round,
+            "auto_deleted": payload.decision == "reject",
+        },
     )
     await session.commit()
-    return avatar_response(version)
+    return response
+
+
+@router.post(
+    "/avatar-versions/{version_id}/delete",
+    response_model=DeleteAvatarVersionResponse,
+)
+async def delete_version(
+    version_id: UUID,
+    payload: DeleteAvatarVersionRequest,
+    idempotency_key: str = Depends(require_idempotency_key),
+    staff: AuthenticatedStaff = Depends(require_doctor),
+    session: AsyncSession = Depends(get_db_session),
+) -> DeleteAvatarVersionResponse:
+    scope = f"doctor:{staff.user.user_id}:manual-avatar-version-delete"
+    request_payload = {
+        "version_id": str(version_id),
+        "confirmation": payload.confirmation,
+        "reason_present": bool(payload.reason),
+    }
+    existing = await find_idempotency(
+        session,
+        actor_scope=scope,
+        operation="delete_avatar_version",
+        key=idempotency_key,
+        payload=request_payload,
+    )
+    if existing and existing.response_snapshot:
+        return DeleteAvatarVersionResponse(**existing.response_snapshot)
+
+    version = await session.get(AvatarVersion, version_id)
+    if version is None:
+        raise ApiError(404, "RESOURCE_NOT_FOUND", "Avatar 版本不存在或无权访问")
+    await owned_case_or_404(
+        session, version.case_id, staff.user.user_id, for_update=True
+    )
+    version = await session.scalar(
+        select(AvatarVersion)
+        .where(AvatarVersion.version_id == version_id)
+        .with_for_update()
+    )
+    if version is None:
+        raise ApiError(404, "RESOURCE_NOT_FOUND", "Avatar 版本不存在或无权访问")
+    if version.generation_status in {
+        GenerationStatus.QUEUED,
+        GenerationStatus.GENERATING,
+        GenerationStatus.CHECKING,
+        GenerationStatus.PENDING_DOCTOR_REVIEW,
+    }:
+        raise ApiError(
+            409,
+            "STATE_CONFLICT",
+            "生成中版本请先取消，待审核版本请使用“拒绝此图”",
+        )
+    if await _is_authorized(session, version.version_id):
+        raise ApiError(
+            409,
+            "AUTHORIZED_VERSION_DELETE_FORBIDDEN",
+            "患者当前正在查看该版本，请先撤销患者授权",
+        )
+
+    case_id = version.case_id
+    generation_round = version.generation_round
+    response = DeleteAvatarVersionResponse(
+        version_id=version.version_id,
+        generation_round=generation_round,
+    )
+    await _delete_avatar_version(session, version)
+    add_idempotency(
+        session,
+        actor_scope=scope,
+        operation="delete_avatar_version",
+        key=idempotency_key,
+        payload=request_payload,
+        resource_id=None,
+        response_snapshot=response.model_dump(mode="json"),
+    )
+    add_audit(
+        session,
+        actor_type=AuditActorType.DOCTOR,
+        actor_user_id=staff.user.user_id,
+        case_id=case_id,
+        action="avatar.version_deleted",
+        metadata={
+            "round": generation_round,
+            "source": "doctor_manual_delete",
+            "reason_present": bool(payload.reason),
+        },
+    )
+    await session.commit()
+    return response
 
 
 @router.post("/avatar-versions/{version_id}/rollback", response_model=AvatarVersionResponse)

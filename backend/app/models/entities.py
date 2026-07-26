@@ -160,6 +160,9 @@ class PatientSession(Base):
         default=SessionStatus.WAITING_DOCTOR,
         nullable=False,
     )
+    assessment_mode: Mapped[str] = mapped_column(
+        String(32), default="new_assessment", nullable=False
+    )
     consent_confirmed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.user_id"))
     consent_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consent_version: Mapped[str | None] = mapped_column(String(50))
@@ -333,6 +336,7 @@ class AdjustmentRequest(Base):
         enum_column(AdjustmentStatus, "adjustment_status_enum"), nullable=False
     )
     reviewed_instruction_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    rejection_reason_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.user_id"))

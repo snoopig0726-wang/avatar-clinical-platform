@@ -8,6 +8,7 @@ from app.adapters.image_generation.providers import (
     GeneratedImage,
     ImageGenerationError,
     MockImageGenerationProvider,
+    OpenAIImageGenerationProvider,
 )
 from app.adapters.image_generation.semantic_safety import (
     MockSemanticImageSafetyProvider,
@@ -30,6 +31,37 @@ class SequenceProvider:
         output = self.outputs[min(self.calls, len(self.outputs) - 1)]
         self.calls += 1
         return output
+
+
+def test_openai_image_provider_uses_configured_fast_quality() -> None:
+    captured: dict[str, object] = {}
+
+    class Images:
+        def generate(self, **payload: object) -> SimpleNamespace:
+            captured.update(payload)
+            return SimpleNamespace(
+                id="image-test",
+                data=[SimpleNamespace(b64_json="cG5n")],
+            )
+
+    provider = object.__new__(OpenAIImageGenerationProvider)
+    provider.model = "gpt-image-2"
+    provider.quality = "low"
+    provider.client = SimpleNamespace(images=Images())
+
+    result = provider.generate("portrait")
+
+    assert result.content == b"png"
+    assert result.provider_request_id == "image-test"
+    assert captured == {
+        "model": "gpt-image-2",
+        "prompt": "portrait",
+        "size": "1024x1024",
+        "quality": "low",
+        "output_format": "png",
+        "moderation": "auto",
+        "n": 1,
+    }
 
 
 @pytest.mark.asyncio

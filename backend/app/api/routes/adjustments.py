@@ -48,6 +48,7 @@ from app.services.adjustments import (
     CONTROLLED_ADJUSTMENT_OPTIONS,
     adjustment_usage,
     build_controlled_instruction,
+    build_controlled_options,
 )
 from app.services.core import add_audit, add_idempotency, find_idempotency, utc_now
 from app.services.risk_engine import (
@@ -78,10 +79,21 @@ async def active_avatar_authorization(
 
 
 def patient_adjustment_response(request: AdjustmentRequest) -> PatientAdjustmentResponse:
+    rejection_reason = (
+        decrypt_sensitive_text(
+            request.rejection_reason_encrypted, get_settings().secret_key
+        )
+        if request.rejection_reason_encrypted
+        else None
+    )
     return PatientAdjustmentResponse(
         request_id=request.request_id,
         sequence_no=request.sequence_no,
+        instruction=decrypt_sensitive_text(
+            request.submitted_text_encrypted, get_settings().secret_key
+        ),
         status=request.doctor_status,
+        rejection_reason=rejection_reason,
         submitted_at=request.submitted_at,
         reviewed_at=request.reviewed_at,
     )
@@ -89,6 +101,9 @@ def patient_adjustment_response(request: AdjustmentRequest) -> PatientAdjustment
 
 def doctor_adjustment_response(request: AdjustmentRequest) -> DoctorAdjustmentResponse:
     settings = get_settings()
+    instruction = decrypt_sensitive_text(
+        request.submitted_text_encrypted, settings.secret_key
+    )
     controlled = (
         decrypt_sensitive_text(request.reviewed_instruction_encrypted, settings.secret_key)
         if request.reviewed_instruction_encrypted
@@ -96,8 +111,9 @@ def doctor_adjustment_response(request: AdjustmentRequest) -> DoctorAdjustmentRe
     )
     return DoctorAdjustmentResponse(
         **patient_adjustment_response(request).model_dump(),
-        instruction=decrypt_sensitive_text(request.submitted_text_encrypted, settings.secret_key),
         controlled_instruction=controlled,
+        suggested_controlled_instruction=build_controlled_instruction(instruction),
+        controlled_options=build_controlled_options(instruction),
     )
 
 
@@ -347,12 +363,17 @@ async def review_adjustment(
         controlled = build_controlled_instruction(raw)
         request.doctor_status = AdjustmentStatus.APPROVED_AS_IS
     elif payload.decision == "approve_edited":
-        if payload.controlled_instruction not in CONTROLLED_ADJUSTMENT_OPTIONS:
-            raise ApiError(422, "VALIDATION_ERROR", "请选择系统提供的受控调整指令")
+        raw = decrypt_sensitive_text(request.submitted_text_encrypted, get_settings().secret_key)
+        compatible_options = build_controlled_options(raw)
+        if payload.controlled_instruction not in compatible_options:
+            raise ApiError(422, "VALIDATION_ERROR", "请选择与患者本次建议方向一致的受控调整指令")
         controlled = payload.controlled_instruction
         request.doctor_status = AdjustmentStatus.APPROVED_EDITED
     else:
         request.doctor_status = AdjustmentStatus.REJECTED
+        request.rejection_reason_encrypted = encrypt_sensitive_text(
+            payload.rejection_reason or "", get_settings().secret_key
+        )
 
     now = utc_now()
     request.reviewed_at = now

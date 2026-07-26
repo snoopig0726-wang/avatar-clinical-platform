@@ -58,8 +58,11 @@ def test_doctor_confirmation_is_required() -> None:
 def test_prompt_uses_confirmed_visual_features_and_no_risk_classification() -> None:
     messages = build_prompt_messages(valid_payload())
 
-    assert messages["template_version"] == "voice-to-appearance-v1.0"
-    assert "医生确认后的最终视觉特征" in messages["user"]
+    assert messages["template_version"] == "voice-to-appearance-v1.1"
+    assert "医生确认后的最终视觉蓝图" in messages["user"]
+    assert "最多呈现两组可见面部信号" in messages["system"]
+    assert "愤怒或命令式存在时不得出现任何笑容" in messages["system"]
+    assert "浅色纯色上衣" in messages["user"]
     assert "risk_level" not in messages["user"]
 
 

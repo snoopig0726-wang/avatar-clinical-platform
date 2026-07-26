@@ -86,10 +86,11 @@ docker compose up --build
 ```dotenv
 MODEL_PROVIDER=openai
 OPENAI_API_KEY=sk-...
+MODEL_QUALITY=low
 SEMANTIC_IMAGE_SAFETY_PROVIDER=openai
 ```
 
-GPT Image 2 与独立语义图片复检默认共用后端 `OPENAI_API_KEY`；如需隔离密钥，可另设 `SEMANTIC_IMAGE_SAFETY_API_KEY`。密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
+`MODEL_QUALITY=low` 使用 GPT Image 2 的快速质量档，适合医生监督下的候选图迭代；可改为 `medium` 或 `high` 提升最终画质，但生成时间和费用会相应增加。GPT Image 2 与独立语义图片复检默认共用后端 `OPENAI_API_KEY`；如需隔离密钥，可另设 `SEMANTIC_IMAGE_SAFETY_API_KEY`。密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
 
 ### 自动验证
 

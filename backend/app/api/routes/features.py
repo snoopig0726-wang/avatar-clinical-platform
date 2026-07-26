@@ -130,6 +130,24 @@ async def get_voice_features(
     return voice_response(case_id, await latest_sound_description(session, case_id))
 
 
+@router.get(
+    "/sessions/{session_id}/voice-features",
+    response_model=VoiceFeaturesResponse,
+)
+async def get_session_voice_features(
+    session_id: UUID,
+    staff: AuthenticatedStaff = Depends(require_doctor),
+    session: AsyncSession = Depends(get_db_session),
+) -> VoiceFeaturesResponse:
+    patient_session = await doctor_session_or_404(
+        session, session_id, staff.user.user_id
+    )
+    sound = await session.scalar(
+        select(SoundDescription).where(SoundDescription.session_id == session_id)
+    )
+    return voice_response(patient_session.case_id, sound)
+
+
 @router.put(
     "/sessions/{session_id}/voice-features/{question_key}",
     response_model=SaveQuestionResponse,
@@ -145,6 +163,12 @@ async def save_voice_feature_question(
     patient_session = await doctor_session_or_404(session, session_id, staff.user.user_id)
     if patient_session.status != SessionStatus.ACTIVE:
         raise ApiError(409, "STATE_CONFLICT", "只有进行中的监督会话可以录入 Q1–Q8")
+    if patient_session.assessment_mode != "new_assessment":
+        raise ApiError(
+            409,
+            "ASSESSMENT_REUSED",
+            "本次会话正在沿用上次记录；如需修改，请结束本次会话后在新会话中选择重新评估",
+        )
     normalized = validate_question_value(question_key, payload.value)
     scope = f"doctor:{staff.user.user_id}:session:{session_id}"
     request_payload = {"question_key": question_key.value, "value": normalized}
@@ -259,6 +283,8 @@ async def extract_visual_features(
     )
     if sound is None:
         raise ApiError(409, "STATE_CONFLICT", "Q1–Q8 尚未开始录入")
+    if set(sound.answered_questions or []) != set(QUESTION_KEYS):
+        raise ApiError(409, "STATE_CONFLICT", "请先完成全部 Q1–Q8，再生成视觉映射")
     mapping = map_voice_to_visual(sound_to_voice_features(sound))
     now = utc_now()
     await session.execute(

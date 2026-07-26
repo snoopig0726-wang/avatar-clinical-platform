@@ -66,6 +66,18 @@ async def test_doctor_case_invite_and_supervised_session_flow(tmp_path) -> None:
             )
             assert replay.json()["case_id"] == case_id
 
+            cancelled_invite = await client.post(
+                f"/api/cases/{case_id}/session-invites",
+                headers={**doctor_headers, "Idempotency-Key": "create-cancelled-invite"},
+                json={"expires_in_hours": 24},
+            )
+            cancelled = await client.delete(
+                f"/api/session-invites/{cancelled_invite.json()['invite_id']}",
+                headers={**doctor_headers, "Idempotency-Key": "cancel-unused-invite"},
+            )
+            assert cancelled.status_code == 200
+            assert cancelled.json()["status"] == "revoked"
+
             invite = await client.post(
                 f"/api/cases/{case_id}/session-invites",
                 headers={**doctor_headers, "Idempotency-Key": "create-flow-invite"},
@@ -82,6 +94,22 @@ async def test_doctor_case_invite_and_supervised_session_flow(tmp_path) -> None:
             assert redeem.status_code == 200
             session_id = redeem.json()["session_id"]
             patient_headers = {"X-Session-Token": redeem.json()["patient_session_token"]}
+
+            listed_invites = await client.get(
+                f"/api/cases/{case_id}/session-invites",
+                headers=doctor_headers,
+            )
+            listed_by_id = {
+                item["invite_id"]: item for item in listed_invites.json()["items"]
+            }
+            assert listed_by_id[invite.json()["invite_id"]]["code"] == invite_code
+            assert cancelled_invite.json()["invite_id"] not in listed_by_id
+
+            case_with_session = await client.get(
+                f"/api/cases/{case_id}", headers=doctor_headers
+            )
+            assert case_with_session.json()["active_session_count"] == 1
+            assert case_with_session.json()["total_session_count"] == 1
 
             waiting = await client.get(f"/api/sessions/{session_id}", headers=patient_headers)
             assert waiting.json()["status"] == "waiting_doctor"
@@ -189,10 +217,83 @@ async def test_doctor_case_invite_and_supervised_session_flow(tmp_path) -> None:
                 json={"reason": "completed"},
             )
             assert ended.json()["status"] == "ended"
+            case_after_end = await client.get(
+                f"/api/cases/{case_id}", headers=doctor_headers
+            )
+            assert case_after_end.json()["active_session_count"] == 0
+            assert case_after_end.json()["total_session_count"] == 1
             denied_after_end = await client.get(
                 f"/api/sessions/{session_id}", headers=patient_headers
             )
             assert denied_after_end.status_code == 404
+
+            second_invite = await client.post(
+                f"/api/cases/{case_id}/session-invites",
+                headers={**doctor_headers, "Idempotency-Key": "create-reuse-invite"},
+                json={"expires_in_hours": 24},
+            )
+            second_redeem = await client.post(
+                "/api/session-invites/redeem",
+                headers={"Idempotency-Key": "redeem-reuse-invite"},
+                json={
+                    "code": second_invite.json()["code"],
+                    "device_binding": "flow-browser-device-0002",
+                },
+            )
+            second_session_id = second_redeem.json()["session_id"]
+            second_waiting = await client.get(
+                f"/api/sessions/{second_session_id}",
+                headers=doctor_headers,
+            )
+            assert second_waiting.json()["has_prior_assessment"] is True
+
+            mode_required = await client.post(
+                f"/api/sessions/{second_session_id}/start",
+                headers={**doctor_headers, "Idempotency-Key": "reuse-mode-required"},
+                json={"consent_confirmed": True, "consent_version": "v1"},
+            )
+            assert mode_required.status_code == 422
+            assert mode_required.json()["error"]["code"] == "ASSESSMENT_MODE_REQUIRED"
+
+            reused = await client.post(
+                f"/api/sessions/{second_session_id}/start",
+                headers={**doctor_headers, "Idempotency-Key": "start-reuse-session"},
+                json={
+                    "consent_confirmed": True,
+                    "consent_version": "v1",
+                    "assessment_mode": "reuse_previous",
+                },
+            )
+            assert reused.status_code == 200
+            assert reused.json()["assessment_mode"] == "reuse_previous"
+            assert reused.json()["stage"] == "avatar_review"
+
+            reused_session_form = await client.get(
+                f"/api/sessions/{second_session_id}/voice-features",
+                headers=doctor_headers,
+            )
+            assert reused_session_form.json()["complete"] is False
+            assert reused_session_form.json()["answered_questions"] == []
+
+            reuse_write_blocked = await client.put(
+                f"/api/sessions/{second_session_id}/voice-features/voice_gender",
+                headers={**doctor_headers, "Idempotency-Key": "reuse-write-blocked"},
+                json={"value": "female", "source": "doctor_interview"},
+            )
+            assert reuse_write_blocked.status_code == 409
+            assert reuse_write_blocked.json()["error"]["code"] == "ASSESSMENT_REUSED"
+
+            original_session_form = await client.get(
+                f"/api/sessions/{session_id}/voice-features",
+                headers=doctor_headers,
+            )
+            assert original_session_form.json()["answers"] == answers
+
+            await client.post(
+                f"/api/sessions/{second_session_id}/stop",
+                headers={**doctor_headers, "Idempotency-Key": "stop-reuse-session"},
+                json={"reason": "completed"},
+            )
 
             archived = await client.post(
                 f"/api/cases/{case_id}/archive",

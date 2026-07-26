@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { AccessFrame } from '../components/AccessFrame'
+import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
@@ -19,6 +20,7 @@ type RedeemResponse = {
 
 export function PatientInvitePage() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,7 +39,7 @@ export function PatientInvitePage() {
       setError(
         requestError instanceof ApiClientError
           ? requestError.message
-          : '邀请码验证失败，请联系现场医生',
+          : t('邀请码验证失败，请联系现场医生'),
       )
     } finally {
       setSubmitting(false)
@@ -46,14 +48,14 @@ export function PatientInvitePage() {
 
   return (
     <AccessFrame
-      eyebrow="受邀患者入口"
-      title="使用邀请码进入会话"
-      description="邀请码由现场医生提供，仅用于当前设备上的一次受监督会话。"
-      asideTitle="这是一次由医生陪同的受控查看"
+      eyebrow={t('患者入口')}
+      title={t('输入邀请码，进入你的会话')}
+      description={t('请使用医生提供的一次性邀请码。进入后，医生会陪你一起查看和讨论声音体验。')}
+      asideTitle={t('你可以安心表达，我们一起理解')}
       asideItems={[
-        '无需注册账户，也不需要填写姓名或邮箱',
-        '只能查看医生审核并授权的当前 Avatar',
-        '如感到不适，可以随时触发安全暂停',
+        t('无需注册账户，也不用填写姓名、邮箱或联系方式'),
+        t('页面只会展示医生已经检查并确认的内容'),
+        t('任何时候感到不舒服，都可以立即暂停并告诉医生'),
       ]}
     >
       <Alert
@@ -61,8 +63,8 @@ export function PatientInvitePage() {
         type="success"
         showIcon
         icon={<SafetyCertificateOutlined />}
-        message="请在现场医生陪同下继续"
-        description="系统不会要求你提供姓名、身份证号、联系方式或住址。"
+        message={t('请让医生陪在你身边')}
+        description={t('你不需要独自完成，也不必提供任何身份信息。')}
       />
       {error && <Alert className="access-alert" type="error" showIcon message={error} />}
       <Form
@@ -72,18 +74,18 @@ export function PatientInvitePage() {
         onFinish={handleRedeem}
       >
         <Form.Item
-          label="一次性邀请码"
+          label={t('医生提供的邀请码')}
           name="inviteCode"
-          extra="邀请码有效期为 24 小时，且只能兑换一次。"
+          extra={t('每个邀请码只能使用一次；如果无法进入，请直接告诉身边的医生。')}
           rules={[
-            { required: true, message: '请输入现场医生提供的邀请码' },
-            { min: 6, message: '请检查邀请码是否完整' },
+            { required: true, message: t('请输入现场医生提供的邀请码') },
+            { min: 6, message: t('请检查邀请码是否完整') },
           ]}
         >
           <Input
             className="invite-input"
             prefix={<KeyOutlined />}
-            placeholder="例如：A7K9-P2Q4"
+            placeholder={t('例如：A7K9-P2Q4')}
             maxLength={16}
             autoComplete="one-time-code"
           />
@@ -95,10 +97,10 @@ export function PatientInvitePage() {
           className="access-submit"
           loading={submitting}
         >
-          验证并进入会话
+          {t('进入我的会话')}
         </Button>
       </Form>
-      <p className="access-secondary">邀请码无效、过期或已使用时，请联系现场医生重新获取。</p>
+      <p className="access-secondary">{t('邀请码无效、过期或已使用时，请让医生重新创建。')}</p>
     </AccessFrame>
   )
 }

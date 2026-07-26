@@ -31,5 +31,9 @@ Thumbs.db
 
 # Runtime data
 .local-data/
+tmp/
 *.log
 *.db
+
+# Local Netlify folder
+.netlify

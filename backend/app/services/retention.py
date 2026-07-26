@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.enums import RetentionStatus
+from app.domain.enums import AuditActorType, RetentionStatus
 from app.models.entities import (
     AdjustmentRequest,
     AuditLog,
@@ -21,10 +22,12 @@ from app.models.entities import (
     SoundDescription,
     VisualFeature,
 )
-from app.services.core import utc_now
+from app.services.core import add_audit, utc_now
 
 ObjectCleanup = Callable[[UUID], Awaitable[dict[str, int]]]
 MAX_RETENTION_ATTEMPTS = 3
+RETENTION_RUNNING_TIMEOUT = timedelta(minutes=5)
+logger = logging.getLogger(__name__)
 
 
 async def noop_object_cleanup(case_id: UUID) -> dict[str, int]:
@@ -32,7 +35,42 @@ async def noop_object_cleanup(case_id: UUID) -> dict[str, int]:
     return {"object_files": 0, "backup_records": 0}
 
 
-async def _delete_case_business_data(
+async def recover_stale_retention_jobs(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Return interrupted deletion jobs to the runnable queue."""
+    effective_now = now or utc_now()
+    stale_before = effective_now - RETENTION_RUNNING_TIMEOUT
+    jobs = (
+        await session.scalars(
+            select(RetentionJob)
+            .where(
+                RetentionJob.status == RetentionStatus.RUNNING,
+                or_(
+                    RetentionJob.last_attempt_at.is_(None),
+                    RetentionJob.last_attempt_at <= stale_before,
+                ),
+            )
+            .with_for_update(skip_locked=True)
+        )
+    ).all()
+    for job in jobs:
+        if job.attempt_count >= MAX_RETENTION_ATTEMPTS:
+            job.status = RetentionStatus.FAILED
+        else:
+            job.status = RetentionStatus.RETRYING
+            # Manual deletion jobs may originally have a future 30-day due date.
+            # Once an interrupted immediate deletion is recovered, run it now.
+            job.retention_due_at = effective_now
+        job.last_error_code = "RETENTION_INTERRUPTED_OR_TIMED_OUT"
+    if jobs:
+        await session.flush()
+    return len(jobs)
+
+
+async def delete_case_business_data(
     session: AsyncSession,
     job: RetentionJob,
     case_id: UUID,
@@ -129,9 +167,6 @@ async def _delete_case_business_data(
             )
         )
     )
-    adjustment_result = await session.execute(
-        delete(AdjustmentRequest).where(AdjustmentRequest.case_id == case_id)
-    )
     if session_ids:
         authorization_result = await session.execute(
             delete(SessionAvatarAuthorization).where(
@@ -142,6 +177,9 @@ async def _delete_case_business_data(
         authorization_result = None
     avatar_result = await session.execute(
         delete(AvatarVersion).where(AvatarVersion.case_id == case_id)
+    )
+    adjustment_result = await session.execute(
+        delete(AdjustmentRequest).where(AdjustmentRequest.case_id == case_id)
     )
     visual_result = await session.execute(
         delete(VisualFeature).where(VisualFeature.case_id == case_id)
@@ -181,9 +219,10 @@ async def process_due_retention_jobs(
     object_cleanup: ObjectCleanup = noop_object_cleanup,
 ) -> dict[str, int]:
     effective_now = now or utc_now()
-    jobs = (
+    await recover_stale_retention_jobs(session, now=effective_now)
+    job_ids = (
         await session.scalars(
-            select(RetentionJob)
+            select(RetentionJob.retention_job_id)
             .where(
                 RetentionJob.status.in_({RetentionStatus.SCHEDULED, RetentionStatus.RETRYING}),
                 RetentionJob.retention_due_at <= effective_now,
@@ -192,7 +231,18 @@ async def process_due_retention_jobs(
         )
     ).all()
     result = {"processed": 0, "completed": 0, "retrying": 0, "failed": 0}
-    for selected_job in jobs:
+    for job_id in job_ids:
+        selected_job = await session.scalar(
+            select(RetentionJob)
+            .where(
+                RetentionJob.retention_job_id == job_id,
+                RetentionJob.status.in_({RetentionStatus.SCHEDULED, RetentionStatus.RETRYING}),
+                RetentionJob.retention_due_at <= effective_now,
+            )
+            .with_for_update(skip_locked=True)
+        )
+        if selected_job is None:
+            continue
         job_id = selected_job.retention_job_id
         case_id = selected_job.case_id
         if case_id is None:
@@ -204,15 +254,26 @@ async def process_due_retention_jobs(
         await session.commit()
         result["processed"] += 1
         try:
-            deleted = await _delete_case_business_data(
+            deleted = await delete_case_business_data(
                 session, selected_job, case_id, object_cleanup
             )
             selected_job.status = RetentionStatus.COMPLETED
             selected_job.deleted_categories_json = deleted
             selected_job.completed_at = effective_now
+            add_audit(
+                session,
+                actor_type=AuditActorType.SYSTEM,
+                action="retention.case_permanently_deleted",
+                metadata={"deleted_categories": deleted},
+            )
             await session.commit()
             result["completed"] += 1
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Retention deletion failed (%s)",
+                type(exc).__name__,
+                extra={"retention_job_id": str(job_id)},
+            )
             await session.rollback()
             job = await session.get(RetentionJob, job_id)
             if job is None:

@@ -42,6 +42,8 @@ from app.schemas.admin import (
     AdminRiskRuleListResponse,
     AdminRiskRuleResponse,
     AdminStatsResponse,
+    DeleteArchivedCaseRequest,
+    DeleteArchivedCaseResponse,
     OperationalAlertResponse,
     RestoreCaseRequest,
     RestoreCaseResponse,
@@ -64,6 +66,7 @@ AUDIT_METADATA_ALLOWLIST = {
     "changed_fields",
     "consent_version",
     "decision",
+    "deleted_categories",
     "modified_keys",
     "reason_present",
     "risk_rule_version",
@@ -472,6 +475,7 @@ async def list_archived_cases(
         items=[
             AdminArchivedCaseResponse(
                 case_id=case.case_id,
+                study_code=case.study_code,
                 archived_at=case.archived_at,
                 retention_due_at=case.retention_due_at,
                 restorable=ensure_utc(case.retention_due_at) > now,
@@ -538,6 +542,85 @@ async def restore_case(
         status=case.status.value,
         retention_due_at=case.retention_due_at,
     )
+
+
+@router.post(
+    "/cases/{case_id}/permanent-delete",
+    response_model=DeleteArchivedCaseResponse,
+    status_code=202,
+)
+async def permanently_delete_archived_case(
+    case_id: UUID,
+    payload: DeleteArchivedCaseRequest,
+    idempotency_key: str = Depends(require_idempotency_key),
+    staff: AuthenticatedStaff = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> DeleteArchivedCaseResponse:
+    scope = f"admin:{staff.user.user_id}:manual-retention-delete"
+    request_payload = {
+        "case_id": str(case_id),
+        "confirmation": payload.confirmation,
+        "reason_present": bool(payload.reason),
+    }
+    existing = await find_idempotency(
+        session,
+        actor_scope=scope,
+        operation="permanently_delete_archived_case",
+        key=idempotency_key,
+        payload=request_payload,
+    )
+    if existing and existing.response_snapshot:
+        return DeleteArchivedCaseResponse(**existing.response_snapshot)
+
+    case = await session.get(ClinicalCase, case_id)
+    if case is None:
+        raise ApiError(404, "RESOURCE_NOT_FOUND", "归档病例不存在")
+    if case.status != CaseStatus.ARCHIVED:
+        raise ApiError(409, "STATE_CONFLICT", "只有已归档病例可以永久删除")
+    job = await session.scalar(
+        select(RetentionJob)
+        .where(RetentionJob.case_id == case_id)
+        .with_for_update()
+    )
+    if job is None:
+        raise ApiError(409, "STATE_CONFLICT", "病例永久删除任务不存在")
+
+    now = utc_now()
+    if job.status != RetentionStatus.RUNNING:
+        if job.status == RetentionStatus.FAILED:
+            job.attempt_count = 0
+            job.last_attempt_at = None
+        job.status = RetentionStatus.SCHEDULED
+        job.retention_due_at = now
+        job.last_error_code = None
+        job.completed_at = None
+    response = DeleteArchivedCaseResponse(
+        case_id=case_id,
+        retention_job_id=job.retention_job_id,
+        status=job.status,
+    )
+    add_idempotency(
+        session,
+        actor_scope=scope,
+        operation="permanently_delete_archived_case",
+        key=idempotency_key,
+        payload=request_payload,
+        resource_id=job.retention_job_id,
+        response_snapshot=response.model_dump(mode="json"),
+    )
+    add_audit(
+        session,
+        actor_type=AuditActorType.ADMIN,
+        actor_user_id=staff.user.user_id,
+        case_id=case_id,
+        action="admin.case_deletion_scheduled",
+        metadata={
+            "source": "admin_manual_delete",
+            "reason_present": bool(payload.reason),
+        },
+    )
+    await session.commit()
+    return response
 
 
 @router.get("/retention-jobs", response_model=RetentionJobListResponse)

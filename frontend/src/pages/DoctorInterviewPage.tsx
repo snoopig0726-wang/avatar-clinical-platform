@@ -28,6 +28,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Brand } from '../components/Brand'
+import { LanguageSwitcher } from '../components/LanguageSwitcher'
+import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
@@ -83,6 +85,7 @@ const levelMeanings: Record<string, string[]> = {
 export function DoctorInterviewPage() {
   const { caseId, sessionId } = useParams<{ caseId: string; sessionId: string }>()
   const navigate = useNavigate()
+  const { language, t } = useLanguage()
   const [messageApi, messageContext] = message.useMessage()
   const [voiceForm] = Form.useForm<Record<string, unknown>>()
   const [visualForm] = Form.useForm<Record<string, string>>()
@@ -104,19 +107,12 @@ export function DoctorInterviewPage() {
     try {
       const [contractResult, voiceResult] = await Promise.all([
         apiRequest<VoiceFeatureContract>('/meta/voice-feature-contract'),
-        apiRequest<VoiceFeatures>(`/cases/${caseId}/voice-features`, { staffToken: token }),
+        apiRequest<VoiceFeatures>(`/sessions/${sessionId}/voice-features`, { staffToken: token }),
       ])
       setContract(contractResult)
       setVoice(voiceResult)
       voiceForm.setFieldsValue(voiceResult.answers)
-      const firstUnanswered = contractResult.question_order.findIndex(
-        (key) => !voiceResult.answered_questions.includes(key),
-      )
-      setQuestionIndex(
-        firstUnanswered === -1
-          ? contractResult.question_order.length - 1
-          : firstUnanswered,
-      )
+      setQuestionIndex(0)
       try {
         const visualResult = await apiRequest<VisualFeatures>(`/cases/${caseId}/visual-features`, {
           staffToken: token,
@@ -128,11 +124,11 @@ export function DoctorInterviewPage() {
       }
       setError(null)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '访谈表单加载失败')
+      setError(requestError instanceof Error ? requestError.message : t('访谈表单加载失败'))
     } finally {
       setLoading(false)
     }
-  }, [caseId, navigate, sessionId, visualForm, voiceForm])
+  }, [caseId, navigate, sessionId, t, visualForm, voiceForm])
 
   useEffect(() => void loadData(), [loadData])
 
@@ -155,7 +151,7 @@ export function DoctorInterviewPage() {
         idempotencyKey: newIdempotencyKey(`q-${questionKey}`),
         body: { value, source: 'doctor_interview' },
       })
-      const refreshed = await apiRequest<VoiceFeatures>(`/cases/${caseId}/voice-features`, {
+      const refreshed = await apiRequest<VoiceFeatures>(`/sessions/${sessionId}/voice-features`, {
         staffToken: token,
       })
       setVoice(refreshed)
@@ -163,13 +159,13 @@ export function DoctorInterviewPage() {
         await extractFeatures(token)
       } else if (options?.advance && questionIndex < contract.question_order.length - 1) {
         setQuestionIndex((current) => current + 1)
-        messageApi.success(`第 ${questionIndex + 1} 题已自动保存`)
+        messageApi.success(language === 'en' ? `Question ${questionIndex + 1} saved automatically` : `${t('第')} ${questionIndex + 1} ${t('题已自动保存')}`)
       } else {
-        messageApi.success(`第 ${questionIndex + 1} 题已保存`)
+        messageApi.success(language === 'en' ? `Question ${questionIndex + 1} saved` : `${t('第')} ${questionIndex + 1} ${t('题已保存')}`)
       }
       return true
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '保存失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('保存失败'))
       return false
     } finally {
       setSaving(false)
@@ -190,9 +186,9 @@ export function DoctorInterviewPage() {
       })
       setVisual(result)
       visualForm.setFieldsValue(result.effective_features)
-      messageApi.success('视觉特征映射已完成，请由医生确认')
+      messageApi.success(t('视觉特征映射已完成，请由医生确认'))
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '映射失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('映射失败'))
     }
   }
 
@@ -210,16 +206,16 @@ export function DoctorInterviewPage() {
   function renderQuestionInput(questionKey: string) {
     const required = !contract?.optional_nullable_questions.includes(questionKey)
     const rules = required
-      ? [{ required: true, message: `请完成${labels[questionKey]}` }]
+      ? [{ required: true, message: `${t('请完成')}${t(labels[questionKey])}` }]
       : undefined
     if (questionKey === 'emotions') {
       return (
         <Form.Item name={questionKey} rules={rules}>
           <Checkbox.Group
-            aria-label={labels[questionKey]}
+            aria-label={t(labels[questionKey])}
             options={contract?.enums.emotions.map((value) => ({
               value,
-              label: enumLabels[value],
+              label: t(enumLabels[value]),
             }))}
           />
         </Form.Item>
@@ -230,19 +226,19 @@ export function DoctorInterviewPage() {
       return (
         <Form.Item name={questionKey} rules={rules}>
           <Slider
-            aria-label={labels[questionKey]}
+            aria-label={t(labels[questionKey])}
             min={1}
             max={5}
             step={1}
             marks={Object.fromEntries(
               meanings.map((meaning, index) => [
                 index + 1,
-                { label: <span>{index + 1}<small>{meaning}</small></span> },
+                { label: <span>{index + 1}<small>{t(meaning)}</small></span> },
               ]),
             )}
             tooltip={{
               formatter: (value) =>
-                value ? `${value} 档 · ${meanings[value - 1]}` : null,
+                value ? `${value} · ${t(meanings[value - 1])}` : null,
             }}
           />
         </Form.Item>
@@ -252,10 +248,10 @@ export function DoctorInterviewPage() {
     return (
       <Form.Item name={questionKey} rules={rules}>
         <Select
-          aria-label={labels[questionKey]}
+          aria-label={t(labels[questionKey])}
           allowClear={!required}
-          placeholder={required ? '请选择' : '未填写'}
-          options={values.map((value) => ({ value, label: enumLabels[value] }))}
+          placeholder={t(required ? '请选择' : '未填写')}
+          options={values.map((value) => ({ value, label: t(enumLabels[value]) }))}
         />
       </Form.Item>
     )
@@ -280,15 +276,15 @@ export function DoctorInterviewPage() {
       setVisual(result)
       visualForm.setFieldsValue(result.effective_features)
       setRestoreSystem(false)
-      messageApi.success('九项视觉特征已由当前医生确认')
+      messageApi.success(t('九项视觉特征已由当前医生确认'))
     } catch (requestError) {
-      messageApi.error(requestError instanceof Error ? requestError.message : '确认失败')
+      messageApi.error(requestError instanceof Error ? requestError.message : t('确认失败'))
     } finally {
       setSaving(false)
     }
   }
 
-  if (loading) return <div className="route-fallback"><Spin size="large" tip="正在恢复访谈草稿…" /></div>
+  if (loading) return <div className="route-fallback"><Spin size="large" tip={t('正在恢复访谈草稿…')} /></div>
 
   const currentQuestionKey = contract?.question_order[questionIndex]
   const currentQuestionRequired = currentQuestionKey
@@ -300,37 +296,40 @@ export function DoctorInterviewPage() {
       {messageContext}
       <header className="case-page__header">
         <Brand />
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/doctor/cases/${caseId}`)}>返回病例</Button>
+        <div className="case-page__header-actions">
+          <LanguageSwitcher />
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/doctor/cases/${caseId}`)}>{t('返回病例')}</Button>
+        </div>
       </header>
       <main className="interview-page__content">
         <div className="interview-page__heading">
-          <div><span className="eyebrow">医生当面访谈</span><h1>Q1–Q8 声音特征录入</h1><p>所有内容仅由医生录入，患者页面不会显示题目、选项或答案。</p></div>
+        <div><span className="eyebrow">{t('医生陪同访谈')}</span><h1>{t('记录患者的声音体验')}</h1><p>{t('请结合患者原话与现场观察逐项记录；题目、选项和答案不会显示在患者页面。')}</p></div>
           <Progress type="circle" size={72} percent={Math.round(((voice?.completed_count ?? 0) / 8) * 100)} format={() => `${voice?.completed_count ?? 0}/8`} />
         </div>
         {error && <Alert type="error" showIcon message={error} />}
-        <Steps className="interview-steps" current={visual?.is_doctor_confirmed ? 2 : visual ? 1 : 0} items={[{ title: '结构化访谈' }, { title: '视觉映射' }, { title: '医生确认' }]} />
+        <Steps className="interview-steps" current={visual?.is_doctor_confirmed ? 2 : visual ? 1 : 0} items={[{ title: t('结构化访谈') }, { title: t('视觉映射') }, { title: t('医生确认') }]} />
 
         <Card
           className="interview-card guided-question-card"
-          title={<span><SoundOutlined /> 问题 {questionIndex + 1} / 8</span>}
+          title={<span><SoundOutlined /> {t('问题')} {questionIndex + 1} / 8</span>}
           extra={
             <Space>
               <Tag color={currentQuestionRequired ? 'green' : 'default'}>
-                {currentQuestionRequired ? '必填' : '选填，可跳过'}
+                {t(currentQuestionRequired ? '必填' : '选填，可跳过')}
               </Tag>
-              <Tag color="green">首轮不执行风险分级</Tag>
+              <Tag color="green">{t('首轮不执行风险分级')}</Tag>
             </Space>
           }
         >
           <Form form={voiceForm} layout="vertical" requiredMark="optional">
             {currentQuestionKey && (
               <div className="guided-question">
-                <span className="guided-question__label">{labels[currentQuestionKey]}</span>
-                <h2>{questionPrompts[currentQuestionKey]}</h2>
+                <span className="guided-question__label">{t(labels[currentQuestionKey])}</span>
+                <h2>{t(questionPrompts[currentQuestionKey])}</h2>
                 <p>
                   {currentQuestionRequired
-                    ? '请根据当面访谈结果选择；确认后本题会自动保存。'
-                    : '本题为选填；未观察到时可以明确跳过，并保存为“未填写”。'}
+                    ? t('请根据当面访谈结果选择；确认后本题会自动保存。')
+                    : t('本题为选填；未观察到时可以明确跳过，并保存为“未填写”。')}
                 </p>
                 {renderQuestionInput(currentQuestionKey)}
               </div>
@@ -341,12 +340,12 @@ export function DoctorInterviewPage() {
                 disabled={questionIndex === 0}
                 onClick={() => setQuestionIndex((current) => Math.max(0, current - 1))}
               >
-                上一题
+                {t('上一题')}
               </Button>
               <Space wrap>
                 {!currentQuestionRequired && (
                   <Button disabled={saving} onClick={() => void skipOptionalQuestion()}>
-                    暂不填写
+                    {t('暂不填写')}
                   </Button>
                 )}
                 <Button
@@ -354,7 +353,7 @@ export function DoctorInterviewPage() {
                   loading={saving}
                   onClick={() => void saveCurrentQuestion()}
                 >
-                  保存本题
+                  {t('保存本题')}
                 </Button>
                 <Button
                   type="primary"
@@ -367,7 +366,7 @@ export function DoctorInterviewPage() {
                     })
                   }
                 >
-                  {questionIndex === 7 ? '保存并映射视觉特征' : '确认并继续'}
+                  {t(questionIndex === 7 ? '保存并映射视觉特征' : '确认并继续')}
                 </Button>
               </Space>
             </div>
@@ -375,22 +374,21 @@ export function DoctorInterviewPage() {
         </Card>
 
         {visual && (
-          <Card className="interview-card visual-confirm-card" title={<span><SafetyCertificateOutlined /> 九项视觉特征确认</span>} extra={visual.is_doctor_confirmed ? <Tag color="success" icon={<CheckCircleFilled />}>医生已确认</Tag> : <Tag color="warning">等待医生确认</Tag>}>
-            <Alert type="info" showIcon message="系统映射不是身份推断" description="以下结果只用于低刺激、虚构和非身份化的视觉表达。修改只能从每个字段的受控选项中选择。" />
+      <Card className="interview-card visual-confirm-card" title={<span><SafetyCertificateOutlined /> {t('视觉表达方向确认')}</span>} extra={visual.is_doctor_confirmed ? <Tag color="success" icon={<CheckCircleFilled />}>{t('医生已确认')}</Tag> : <Tag color="warning">{t('等待医生确认')}</Tag>}>
+            <Alert type="info" showIcon message={t('系统映射不是身份推断')} description={t('以下结果只用于低刺激、虚构和非身份化的视觉表达。修改只能从每个字段的受控选项中选择。')} />
             <Form form={visualForm} layout="vertical" className="visual-form" onValuesChange={() => setRestoreSystem(false)}>
               <Row gutter={[20, 4]}>
                 {Object.keys(visual.system_result).map((key) => {
                   const options = Array.from(new Set([visual.system_result[key], ...visual.controlled_options[key]]))
-                  return <Col xs={24} md={12} key={key}><Form.Item label={visualLabels[key]} name={key} rules={[{ required: true }]}><Select options={options.map((value) => ({ value, label: value }))} /></Form.Item></Col>
+                  return <Col xs={24} md={12} key={key}><Form.Item label={t(visualLabels[key])} name={key} rules={[{ required: true }]}><Select options={options.map((value, index) => ({ value, label: language === 'en' ? (value === visual.system_result[key] ? 'System recommendation' : `Controlled option ${index + 1}`) : t(value) }))} /></Form.Item></Col>
                 })}
               </Row>
             </Form>
-            {visual.mapping_explanation.safety_rules_applied.length > 0 && <Alert type="success" showIcon message="已应用自动柔和规则" description={visual.mapping_explanation.safety_rules_applied.join('；')} />}
-            <Space className="visual-actions"><Button onClick={() => { visualForm.setFieldsValue(visual.system_result); setRestoreSystem(true) }}>恢复系统结果</Button><Button type="primary" icon={<CheckCircleFilled />} loading={saving} onClick={() => void confirmVisualFeatures()}>确认视觉特征</Button></Space>
+            <Space className="visual-actions"><Button onClick={() => { visualForm.setFieldsValue(visual.system_result); setRestoreSystem(true) }}>{t('恢复系统结果')}</Button><Button type="primary" icon={<CheckCircleFilled />} loading={saving} onClick={() => void confirmVisualFeatures()}>{t('确认视觉特征')}</Button></Space>
           </Card>
         )}
 
-        {visual?.is_doctor_confirmed && <Alert className="interview-complete" type="success" showIcon message="表单和视觉特征确认已完成" description="统一 Prompt 构建门禁已经满足；请返回病例页面发起首版生成或按相同特征重新生成。" />}
+        {visual?.is_doctor_confirmed && <Alert className="interview-complete" type="success" showIcon message={t('访谈记录与视觉方向已确认')} description={t('现在可以返回病例页面，为患者生成第一版视觉表达；后续也可根据患者反馈继续调整。')} />}
       </main>
     </div>
   )

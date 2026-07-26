@@ -71,6 +71,11 @@ async def case_response(session: AsyncSession, case: ClinicalCase) -> CaseRespon
             PatientSession.status.in_(ACTIVE_SESSION_STATUSES),
         )
     )
+    total_count = await session.scalar(
+        select(func.count(PatientSession.session_id)).where(
+            PatientSession.case_id == case.case_id,
+        )
+    )
     return CaseResponse(
         case_id=case.case_id,
         study_code=case.study_code,
@@ -80,6 +85,7 @@ async def case_response(session: AsyncSession, case: ClinicalCase) -> CaseRespon
         archived_at=case.archived_at,
         retention_due_at=case.retention_due_at,
         active_session_count=active_count or 0,
+        total_session_count=total_count or 0,
     )
 
 
@@ -88,12 +94,15 @@ async def list_cases(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status: CaseStatus | None = None,
+    q: str | None = Query(default=None, max_length=100),
     staff: AuthenticatedStaff = Depends(require_doctor),
     session: AsyncSession = Depends(get_db_session),
 ) -> CaseListResponse:
     filters = [ClinicalCase.owner_doctor_id == staff.user.user_id]
     if status is not None:
         filters.append(ClinicalCase.status == status)
+    if q and (normalized_query := q.strip()):
+        filters.append(ClinicalCase.study_code.ilike(f"%{normalized_query}%"))
     total = await session.scalar(select(func.count(ClinicalCase.case_id)).where(*filters))
     cases = (
         await session.scalars(

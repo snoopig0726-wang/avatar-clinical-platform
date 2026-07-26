@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -122,6 +123,7 @@ class AdminStatsResponse(BaseModel):
 
 class AdminArchivedCaseResponse(BaseModel):
     case_id: UUID
+    study_code: str
     archived_at: datetime
     retention_due_at: datetime
     restorable: bool
@@ -142,6 +144,19 @@ class RestoreCaseResponse(BaseModel):
     status: str
     retention_due_at: datetime
     old_sessions_restored: bool = False
+
+
+class DeleteArchivedCaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: Literal["PERMANENTLY_DELETE_ARCHIVED_CASE"]
+    reason: str | None = Field(default=None, max_length=100)
+
+
+class DeleteArchivedCaseResponse(BaseModel):
+    case_id: UUID
+    retention_job_id: UUID
+    status: Literal[RetentionStatus.SCHEDULED, RetentionStatus.RUNNING]
 
 
 class RetentionJobResponse(BaseModel):

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, m
 
 from app.domain.enums import GenerationMode
 
-PROMPT_TEMPLATE_VERSION = "voice-to-appearance-v1.0"
+PROMPT_TEMPLATE_VERSION = "voice-to-appearance-v1.1"
 
 
 class VoiceGender(StrEnum):
@@ -128,20 +128,46 @@ class ConfirmedGenerationInput(BaseModel):
         return self
 
 
+PORTRAIT_CONTRACT = """## 固定肖像契约
+
+- 输出一张 1024×1024 的 1:1 PNG；单人、虚构、非身份化、写实胸像。
+- 正面或不超过 15° 的轻微侧脸，眼平视角，人物居中。
+- 使用浅暖灰或医疗纸白纯色背景、柔和均匀漫射光。
+- 使用米白、浅灰或浅雾蓝纯色上衣；无首饰、文字、logo 或水印。
+- 不把声音映射为种族、具体身份、职业、疾病、人格结论或患者本人长相。
+"""
+
+
 SYSTEM_PROMPT = f"""Prompt template version: {PROMPT_TEMPLATE_VERSION}
 
-你是幻听患者个性化 Avatar 系统的受控人像生成执行器。
+你是“幻听患者个性化 Avatar 系统”的受控人像生成提示词执行器。只生成一名虚构、
+非身份化、低刺激的人类写实头像。
 
-只生成一名虚构、非身份化、低刺激的人类写实头像。输出为 1024x1024 正方形 PNG，
-正面或不超过 15 度轻微侧脸，人物居中，纯色极简浅色背景。不得推断真实身份、人格、
-种族或医学事实，不得生成患者本人、名人或其他真实人物。
+{PORTRAIT_CONTRACT}
 
-永久禁止武器、伤口、血迹、自伤、攻击、暴力场景、恶魔、鬼怪、异兽、危险符号、
-面部扭曲、压迫性构图、阴暗场景、文字、logo、水印和额外人物。
+## 执行方式
 
-医生已经完成 Q1-Q8 检查和视觉特征确认。以 effective_visual_features 为最终视觉输入，
-Q1-Q8 只用于保持来源可追溯，不得越过医生确认结果重新强化负面特征。多种情绪必须柔和中和。
-最终只生成图片，不输出解释文字。"""
+医生已经完成 Q1–Q8 检查、受控声音到视觉转换和最终视觉特征确认。
+effective_visual_features 是唯一可执行的视觉蓝图，必须按基础结构 → 面部信号 →
+声音质感 → 画面调制 → 安全保留信号的顺序渲染。每项医生确认后的视觉特征都必须
+保留一项可见、克制且安全的信号，不得用中性化抹去已完成安全转换的特征。
+
+Q1–Q8 来源快照仅用于来源追溯和约束一致性，不得越过医生确认结果重新推断、强化或
+增加视觉特征。情绪只能影响眉、眼、唇的局部状态，最多呈现两组可见面部信号；
+其余已选情绪只能作为相容的轻度气质。语速只能调节微张力，不能覆盖情绪方向。
+强大感和恶意感只能调节已确认的主体比例、明暗与距离感，不能制造黑衣、低机位、
+压迫姿态、威胁凝视或强阴影。愤怒或命令式存在时不得出现任何笑容。
+
+儿童、老年和高冲突组合必须使用已确认特征中的低刺激安全等价信号，而不是删除字段
+含义。医生覆盖只能修改对应视觉维度，不能突破固定肖像契约或永久禁止项。
+
+## 永久禁止
+
+绝不生成真实人物复刻、身份信息、医疗诊断暗示、武器、伤口、血迹、自伤或攻击动作、
+暴力场景、恶魔、鬼怪、尖牙尖角、恐怖鬼脸、夸张瞪眼、青筋、面部扭曲、纹身、
+黑暗牢笼、废墟、阴暗小巷、多人、文字或水印。
+
+只生成图片，不输出解释文字。"""
 
 
 def build_prompt_messages(payload: ConfirmedGenerationInput | dict) -> dict[str, str]:
@@ -152,7 +178,7 @@ def build_prompt_messages(payload: ConfirmedGenerationInput | dict) -> dict[str,
     )
     source_snapshot = data.voice_features.model_dump(mode="json")
     visual_snapshot = data.effective_visual_features.model_dump(mode="json")
-    user_prompt = f"""请执行一次受控人像生成。
+    user_prompt = f"""请执行一次受控的人像生成，只生成图片，不输出解释文字。
 
 生成模式：{data.generation_mode.value}
 
@@ -161,13 +187,15 @@ Q1-Q8 来源快照：
 {json.dumps(source_snapshot, ensure_ascii=False, indent=2)}
 ```
 
-医生确认后的最终视觉特征：
+医生确认后的最终视觉蓝图：
 ```json
 {json.dumps(visual_snapshot, ensure_ascii=False, indent=2)}
 ```
 
-严格使用最终视觉特征生成低刺激单人写实头像。固定浅色纯色背景、柔和光影、人物居中，
-不得添加任何身份信息、叙事场景、暴力、伤害、恐怖化或真实人物复刻内容。"""
+严格使用医生确认后的最终视觉蓝图，并依次落实基础结构、局部面部信号、声音质感、
+画面调制和安全保留信号。每项已确认视觉特征都要留下至少一个可见、克制且安全的信号。
+固定浅色纯色背景、浅色纯色上衣、柔和均匀光影、眼平居中构图；不得添加身份信息、
+叙事场景、暴力、伤害、恐怖化或真实人物复刻内容。"""
     return {
         "system": SYSTEM_PROMPT,
         "user": user_prompt,

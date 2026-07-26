@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,6 +54,7 @@ class StartSessionRequest(BaseModel):
 
     consent_confirmed: bool
     consent_version: str = Field(default="v1", min_length=1, max_length=50)
+    assessment_mode: Literal["new_assessment", "reuse_previous"] | None = None
 
 
 class AdjustmentUsage(BaseModel):
@@ -67,6 +69,8 @@ class SessionResponse(BaseModel):
     study_code: str | None = None
     status: SessionStatus
     stage: str
+    assessment_mode: Literal["new_assessment", "reuse_previous"]
+    has_prior_assessment: bool = False
     current_authorized_version_id: UUID | None = None
     adjustments: AdjustmentUsage
     created_at: datetime
