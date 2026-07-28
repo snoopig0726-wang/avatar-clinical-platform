@@ -11,6 +11,7 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $runtimeDirectory = Join-Path $repositoryRoot '.local-data\tunnels'
 $stateFile = Join-Path $runtimeDirectory 'state.json'
 $composeEnvironmentFile = Join-Path $runtimeDirectory 'compose.env'
+$repositoryEnvironmentFile = Join-Path $repositoryRoot '.env'
 
 if (Test-Path -LiteralPath $stateFile) {
     throw '检测到已有隧道状态。请先运行 infra\tunnel\stop-demo-tunnels.ps1。'
@@ -110,7 +111,20 @@ try {
 
     Push-Location $repositoryRoot
     try {
-        & docker compose --env-file $composeEnvironmentFile up -d backend worker scheduler
+        $composeArguments = @('compose')
+        if (Test-Path -LiteralPath $repositoryEnvironmentFile) {
+            $composeArguments += @('--env-file', $repositoryEnvironmentFile)
+        }
+        $composeArguments += @(
+            '--env-file',
+            $composeEnvironmentFile,
+            'up',
+            '-d',
+            'backend',
+            'worker',
+            'scheduler'
+        )
+        & docker @composeArguments
         if ($LASTEXITCODE -ne 0) {
             throw 'Docker Compose 未能应用隧道演示配置。'
         }
