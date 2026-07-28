@@ -19,7 +19,7 @@ async def contracts() -> ContractMetaResponse:
             "fear",
             "commanding",
         ],
-        adjustment_limit_per_case=3,
+        adjustment_limit_per_session=3,
         retention_days_after_archive=30,
         initial_structured_risk_classification=False,
     )

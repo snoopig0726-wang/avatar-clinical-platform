@@ -48,6 +48,7 @@ export function PatientInvitePage() {
 
   return (
     <AccessFrame
+      surface="patient"
       eyebrow={t('患者入口')}
       title={t('输入邀请码，进入你的会话')}
       description={t('请使用医生提供的一次性邀请码。进入后，医生会陪你一起查看和讨论声音体验。')}
@@ -57,6 +58,8 @@ export function PatientInvitePage() {
         t('页面只会展示医生已经检查并确认的内容'),
         t('任何时候感到不舒服，都可以立即暂停并告诉医生'),
       ]}
+      asideImage="/images/patient-clinician-conversation.png"
+      asideImagePosition="62% center"
     >
       <Alert
         className="access-alert"

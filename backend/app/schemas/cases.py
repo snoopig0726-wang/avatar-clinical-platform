@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,3 +38,18 @@ class CaseListResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class CaseSafetyEventResponse(BaseModel):
+    event_id: int
+    case_id: UUID
+    study_code: str
+    session_id: UUID | None = None
+    event_type: Literal["patient_discomfort", "sensitive_adjustment"]
+    severity: Literal["warning", "critical"]
+    risk_rule_codes: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class CaseSafetyEventListResponse(BaseModel):
+    items: list[CaseSafetyEventResponse]

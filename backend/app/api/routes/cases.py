@@ -22,6 +22,7 @@ from app.domain.enums import (
 )
 from app.models.entities import (
     AdjustmentRequest,
+    AuditLog,
     ClinicalCase,
     PatientSession,
     RetentionJob,
@@ -32,6 +33,8 @@ from app.schemas.cases import (
     ArchiveCaseRequest,
     CaseListResponse,
     CaseResponse,
+    CaseSafetyEventListResponse,
+    CaseSafetyEventResponse,
     CreateCaseRequest,
 )
 from app.security.crypto import hash_secret
@@ -119,6 +122,96 @@ async def list_cases(
         page_size=page_size,
         total=total or 0,
     )
+
+
+@router.get("/safety-events/recent", response_model=CaseSafetyEventListResponse)
+async def list_recent_safety_events(
+    case_id: UUID | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+    staff: AuthenticatedStaff = Depends(require_doctor),
+    session: AsyncSession = Depends(get_db_session),
+) -> CaseSafetyEventListResponse:
+    filters = [
+        AuditLog.action.in_({"session.safety_paused", "adjustment.risk_blocked"}),
+        AuditLog.created_at >= utc_now() - timedelta(hours=24),
+    ]
+    if case_id is not None:
+        await owned_case_or_404(session, case_id, staff.user.user_id)
+        filters.append(AuditLog.case_id == case_id)
+
+    rows = (
+        await session.execute(
+            select(AuditLog, ClinicalCase.study_code)
+            .join(ClinicalCase, ClinicalCase.case_id == AuditLog.case_id)
+            .where(
+                ClinicalCase.owner_doctor_id == staff.user.user_id,
+                *filters,
+            )
+            .order_by(AuditLog.created_at.desc(), AuditLog.audit_id.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    critical_rule_codes = {"R-001", "R-007"}
+    event_session_ids = {
+        event.session_id for event, _ in rows if event.session_id is not None
+    }
+    session_states = {
+        row.session_id: row
+        for row in (
+            await session.scalars(
+                select(PatientSession).where(
+                    PatientSession.session_id.in_(event_session_ids)
+                )
+            )
+        ).all()
+    }
+    items: list[CaseSafetyEventResponse] = []
+    for event, study_code in rows:
+        metadata = event.metadata_json or {}
+        rule_codes = [
+            str(code)
+            for code in metadata.get("rule_codes", [])
+            if isinstance(code, str)
+        ]
+        event_type = (
+            "patient_discomfort"
+            if event.action == "session.safety_paused"
+            else "sensitive_adjustment"
+        )
+        related_session = (
+            session_states.get(event.session_id) if event.session_id is not None else None
+        )
+        belongs_to_current_pause = bool(
+            related_session
+            and related_session.status == SessionStatus.PAUSED
+            and related_session.paused_at
+            and event.created_at >= related_session.paused_at
+        )
+        is_critical_adjustment = bool(critical_rule_codes.intersection(rule_codes))
+        if event_type == "patient_discomfort" and not belongs_to_current_pause:
+            continue
+        if is_critical_adjustment and not belongs_to_current_pause:
+            continue
+        severity = (
+            "critical"
+            if event_type == "patient_discomfort"
+            or is_critical_adjustment
+            else "warning"
+        )
+        items.append(
+            CaseSafetyEventResponse(
+                event_id=event.audit_id,
+                case_id=event.case_id,
+                study_code=study_code,
+                session_id=event.session_id,
+                event_type=event_type,
+                severity=severity,
+                risk_rule_codes=rule_codes,
+                created_at=event.created_at,
+            )
+        )
+    return CaseSafetyEventListResponse(items=items)
 
 
 @router.post("", response_model=CaseResponse, status_code=201)

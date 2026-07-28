@@ -126,6 +126,11 @@ async def _delete_avatar_version(
             SessionAvatarAuthorization.version_id == version.version_id
         )
     )
+    await session.execute(
+        update(PatientSession)
+        .where(PatientSession.patient_satisfied_version_id == version.version_id)
+        .values(patient_satisfied_version_id=None, patient_satisfied_at=None)
+    )
 
     if version.is_current_candidate:
         replacement = await session.scalar(
@@ -420,6 +425,8 @@ async def _authorize(
     if patient_session.status != SessionStatus.ACTIVE:
         raise ApiError(409, "SESSION_INVALID", "只有进行中的监督会话可以接收授权")
     now = utc_now()
+    patient_session.patient_satisfied_version_id = None
+    patient_session.patient_satisfied_at = None
     await session.execute(
         update(SessionAvatarAuthorization)
         .where(

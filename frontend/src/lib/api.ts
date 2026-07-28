@@ -95,6 +95,10 @@ export function getPatientSessionToken(sessionId: string): string | null {
   return sessionStorage.getItem(`avatar.patient_session.${sessionId}`)
 }
 
+export function clearPatientSession(sessionId: string): void {
+  sessionStorage.removeItem(`avatar.patient_session.${sessionId}`)
+}
+
 export type StaffUser = {
   user_id: string
   role: 'doctor' | 'admin'
@@ -140,6 +144,21 @@ export type CaseListResponse = {
   total: number
 }
 
+export type CaseSafetyEvent = {
+  event_id: number
+  case_id: string
+  study_code: string
+  session_id: string | null
+  event_type: 'patient_discomfort' | 'sensitive_adjustment'
+  severity: 'warning' | 'critical'
+  risk_rule_codes: string[]
+  created_at: string
+}
+
+export type CaseSafetyEventListResponse = {
+  items: CaseSafetyEvent[]
+}
+
 export type SessionInvite = {
   invite_id: string
   session_id: string | null
@@ -160,6 +179,9 @@ export type PatientSession = {
   stage: string
   assessment_mode: 'new_assessment' | 'reuse_previous'
   has_prior_assessment: boolean
+  current_authorized_version_id: string | null
+  patient_satisfied_version_id: string | null
+  patient_satisfied_at: string | null
   adjustments: { used: number; limit: number; has_pending: boolean }
   created_at: string
   started_at: string | null

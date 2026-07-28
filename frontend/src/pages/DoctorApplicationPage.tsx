@@ -85,6 +85,7 @@ export function DoctorApplicationPage() {
 
   return (
     <AccessFrame
+      surface="doctor"
       eyebrow={t('医护账户申请')}
       title={t('申请医护工作台账户')}
       description={t('仅向经过机构验证和管理员审批的专业人员开放。')}

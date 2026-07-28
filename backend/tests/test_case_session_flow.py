@@ -222,10 +222,21 @@ async def test_doctor_case_invite_and_supervised_session_flow(tmp_path) -> None:
             )
             assert case_after_end.json()["active_session_count"] == 0
             assert case_after_end.json()["total_session_count"] == 1
-            denied_after_end = await client.get(
+            patient_end_status = await client.get(
                 f"/api/sessions/{session_id}", headers=patient_headers
             )
-            assert denied_after_end.status_code == 404
+            assert patient_end_status.status_code == 200
+            assert patient_end_status.json()["status"] == "ended"
+
+            denied_write_after_end = await client.post(
+                f"/api/patient-sessions/{session_id}/pause",
+                headers={
+                    **patient_headers,
+                    "Idempotency-Key": "patient-pause-after-end",
+                },
+                json={"reason": "patient_requested"},
+            )
+            assert denied_write_after_end.status_code == 404
 
             second_invite = await client.post(
                 f"/api/cases/{case_id}/session-invites",

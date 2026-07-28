@@ -47,7 +47,7 @@ async def test_risk_matching_semantics(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
+async def test_adjustment_risk_review_and_per_session_quota(tmp_path) -> None:
     settings = get_settings()
     original_model_provider = settings.model_provider
     original_semantic_safety_provider = settings.semantic_image_safety_provider
@@ -114,6 +114,19 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             assert blocked.status_code == 422
             assert "规则" not in blocked.json()["error"]["message"]
 
+            safety_events = await client.get(
+                f"/api/cases/safety-events/recent?case_id={case_id}",
+                headers=doctor_headers,
+            )
+            assert safety_events.status_code == 200
+            event_types = {
+                item["event_type"] for item in safety_events.json()["items"]
+            }
+            assert event_types == {"patient_discomfort", "sensitive_adjustment"}
+            assert all(
+                "instruction" not in item for item in safety_events.json()["items"]
+            )
+
             paused = await client.get(f"/api/sessions/{session_id}", headers=doctor_headers)
             assert paused.json()["status"] == "paused"
             resumed = await client.post(
@@ -122,6 +135,33 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
                 json={"reason": "现场医生已评估并确认可以继续"},
             )
             assert resumed.json()["status"] == "active"
+
+            resolved_safety_events = await client.get(
+                f"/api/cases/safety-events/recent?case_id={case_id}",
+                headers=doctor_headers,
+            )
+            assert resolved_safety_events.status_code == 200
+            assert resolved_safety_events.json()["items"] == []
+
+            blocked_sensitive = await client.post(
+                f"/api/patient-sessions/{session_id}/adjustment-requests",
+                headers={**patient_headers, "Idempotency-Key": "blocked-sensitive-hit"},
+                json={"instruction": "生成挥舞刀具的形象"},
+            )
+            assert blocked_sensitive.status_code == 422
+            still_active = await client.get(
+                f"/api/sessions/{session_id}", headers=doctor_headers
+            )
+            assert still_active.json()["status"] == "active"
+            sensitive_events = await client.get(
+                f"/api/cases/safety-events/recent?case_id={case_id}",
+                headers=doctor_headers,
+            )
+            assert sensitive_events.status_code == 200
+            assert [
+                (item["event_type"], item["severity"])
+                for item in sensitive_events.json()["items"]
+            ] == [("sensitive_adjustment", "warning")]
 
             patient_list = await client.get(
                 f"/api/patient-sessions/{session_id}/adjustment-requests",
@@ -246,6 +286,48 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             assert live_avatar.json()["display_mode"] == "image"
             assert live_avatar.json()["image_url"].startswith("data:image/png;base64,")
 
+            satisfied = await client.post(
+                f"/api/patient-sessions/{session_id}/avatar-feedback",
+                headers={
+                    **patient_headers,
+                    "Idempotency-Key": "patient-satisfied-third",
+                },
+                json={
+                    "version_id": generation.json()["version_id"],
+                    "satisfied": True,
+                },
+            )
+            assert satisfied.status_code == 200
+            assert (
+                satisfied.json()["patient_satisfied_version_id"]
+                == generation.json()["version_id"]
+            )
+            assert satisfied.json()["patient_satisfied_at"] is not None
+
+            doctor_session = await client.get(
+                f"/api/sessions/{session_id}",
+                headers=doctor_headers,
+            )
+            assert (
+                doctor_session.json()["patient_satisfied_version_id"]
+                == generation.json()["version_id"]
+            )
+
+            withdrawn = await client.post(
+                f"/api/patient-sessions/{session_id}/avatar-feedback",
+                headers={
+                    **patient_headers,
+                    "Idempotency-Key": "patient-withdrew-satisfaction",
+                },
+                json={
+                    "version_id": generation.json()["version_id"],
+                    "satisfied": False,
+                },
+            )
+            assert withdrawn.status_code == 200
+            assert withdrawn.json()["patient_satisfied_version_id"] is None
+            assert withdrawn.json()["patient_satisfied_at"] is None
+
             exhausted = await client.post(
                 f"/api/patient-sessions/{session_id}/adjustment-requests",
                 headers={**patient_headers, "Idempotency-Key": "safe-fourth"},
@@ -254,8 +336,75 @@ async def test_adjustment_risk_review_and_lifetime_quota(tmp_path) -> None:
             assert exhausted.status_code == 409
             assert exhausted.json()["error"]["code"] == "ADJUSTMENT_LIMIT_REACHED"
 
+            ended = await client.post(
+                f"/api/sessions/{session_id}/stop",
+                headers={**doctor_headers, "Idempotency-Key": "end-first-session"},
+                json={"reason": "completed"},
+            )
+            assert ended.status_code == 200
+            assert ended.json()["status"] == "ended"
+
+            second_invite = await client.post(
+                f"/api/cases/{case_id}/session-invites",
+                headers={
+                    **doctor_headers,
+                    "Idempotency-Key": "create-second-session-invite",
+                },
+                json={"expires_in_hours": 24},
+            )
+            assert second_invite.status_code == 201
+            second_redeem = await client.post(
+                "/api/session-invites/redeem",
+                headers={"Idempotency-Key": "redeem-second-session-invite"},
+                json={
+                    "code": second_invite.json()["code"],
+                    "device_binding": "adjustment-second-browser-device",
+                },
+            )
+            assert second_redeem.status_code == 200
+            second_session_id = second_redeem.json()["session_id"]
+            second_patient_headers = {
+                "X-Session-Token": second_redeem.json()["patient_session_token"]
+            }
+
+            second_started = await client.post(
+                f"/api/sessions/{second_session_id}/start",
+                headers={
+                    **doctor_headers,
+                    "Idempotency-Key": "start-second-session",
+                },
+                json={
+                    "consent_confirmed": True,
+                    "consent_version": "v1",
+                    "assessment_mode": "reuse_previous",
+                },
+            )
+            assert second_started.status_code == 200
+            assert second_started.json()["status"] == "active"
+
+            reset_usage = await client.get(
+                f"/api/patient-sessions/{second_session_id}/adjustment-requests",
+                headers=second_patient_headers,
+            )
+            assert reset_usage.status_code == 200
+            assert reset_usage.json()["used"] == 0
+            assert reset_usage.json()["limit"] == 3
+            assert reset_usage.json()["has_pending"] is False
+
+            first_in_second_session = await client.post(
+                f"/api/patient-sessions/{second_session_id}/adjustment-requests",
+                headers={
+                    **second_patient_headers,
+                    "Idempotency-Key": "second-session-first-adjustment",
+                },
+                json={"instruction": "Make the background a little softer"},
+            )
+            assert first_in_second_session.status_code == 201
+            assert first_in_second_session.json()["sequence_no"] == 1
+            assert first_in_second_session.json()["used"] == 1
+
         async with factory() as session:
-            assert await session.scalar(select(func.count(AdjustmentRequest.request_id))) == 3
+            assert await session.scalar(select(func.count(AdjustmentRequest.request_id))) == 4
             blocked_audit = await session.scalar(
                 select(AuditLog).where(AuditLog.action == "adjustment.risk_blocked")
             )

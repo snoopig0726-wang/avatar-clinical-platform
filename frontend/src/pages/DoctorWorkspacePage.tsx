@@ -40,6 +40,8 @@ import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
+  type CaseSafetyEvent,
+  type CaseSafetyEventListResponse,
   type CaseListResponse,
   type ClinicalCase,
   newIdempotencyKey,
@@ -76,6 +78,7 @@ export function DoctorWorkspacePage() {
   const [user, setUser] = useState<StaffUser | null>(null)
   const [cases, setCases] = useState<ClinicalCase[]>([])
   const [caseRows, setCaseRows] = useState<ClinicalCase[]>([])
+  const [safetyEvents, setSafetyEvents] = useState<CaseSafetyEvent[]>([])
   const [caseTotal, setCaseTotal] = useState(0)
   const [casePage, setCasePage] = useState(1)
   const [casePageSize, setCasePageSize] = useState(5)
@@ -88,6 +91,8 @@ export function DoctorWorkspacePage() {
   const [creating, setCreating] = useState(false)
   const [invite, setInvite] = useState<SessionInvite | null>(null)
   const [form] = Form.useForm<{ study_code: string }>()
+  const knownSafetyEventIds = useRef<Set<number> | null>(null)
+  const workspaceRefreshRunning = useRef(false)
 
   const loadCasePage = useCallback(async (page: number, pageSize: number, query: string) => {
     const token = staffTokenStore.get()
@@ -120,10 +125,13 @@ export function DoctorWorkspacePage() {
       return
     }
     try {
-      const [currentUser, caseList, firstPage] = await Promise.all([
+      const [currentUser, caseList, firstPage, safetyResult] = await Promise.all([
         apiRequest<StaffUser>('/users/me', { staffToken: token }),
         apiRequest<CaseListResponse>('/cases?page=1&page_size=100', { staffToken: token }),
         apiRequest<CaseListResponse>('/cases?page=1&page_size=5', { staffToken: token }),
+        apiRequest<CaseSafetyEventListResponse>('/cases/safety-events/recent', {
+          staffToken: token,
+        }),
       ])
       setUser(currentUser)
       setCases(caseList.items)
@@ -131,6 +139,10 @@ export function DoctorWorkspacePage() {
       setCaseTotal(firstPage.total)
       setCasePage(firstPage.page)
       setCasePageSize(firstPage.page_size)
+      setSafetyEvents(safetyResult.items)
+      knownSafetyEventIds.current = new Set(
+        safetyResult.items.map((item) => item.event_id),
+      )
       setError(null)
     } catch (requestError) {
       if (requestError instanceof ApiClientError && requestError.status === 401) {
@@ -145,6 +157,79 @@ export function DoctorWorkspacePage() {
   }, [navigate, t])
 
   useEffect(() => void loadWorkspace(), [loadWorkspace])
+
+  const loadWorkspaceRealtime = useCallback(async () => {
+    const token = staffTokenStore.get()
+    if (
+      !token
+      || document.visibilityState !== 'visible'
+      || workspaceRefreshRunning.current
+    ) return
+    workspaceRefreshRunning.current = true
+    try {
+      const params = new URLSearchParams({
+        page: String(casePage),
+        page_size: String(casePageSize),
+      })
+      if (appliedCaseQuery) params.set('q', appliedCaseQuery)
+      const [caseList, visiblePage, safetyResult] = await Promise.all([
+        apiRequest<CaseListResponse>('/cases?page=1&page_size=100', {
+          staffToken: token,
+        }),
+        apiRequest<CaseListResponse>(`/cases?${params.toString()}`, {
+          staffToken: token,
+        }),
+        apiRequest<CaseSafetyEventListResponse>('/cases/safety-events/recent', {
+          staffToken: token,
+        }),
+      ])
+
+      const knownIds = knownSafetyEventIds.current
+      const newEvents = knownIds
+        ? safetyResult.items.filter((item) => !knownIds.has(item.event_id))
+        : []
+      if (newEvents.length > 0) {
+        const latest = newEvents[0]
+        Modal.warning({
+          title: t('患者安全提醒'),
+          content: `${latest.study_code} · ${t(
+            latest.event_type === 'patient_discomfort'
+              ? '患者表示不适，会话已安全暂停，请立即关注。'
+              : '系统拦截了一条包含敏感内容的患者调整建议，请及时关注。',
+          )}`,
+          okText: t('查看病例'),
+          onOk: () => navigate(`/doctor/cases/${latest.case_id}`),
+        })
+      }
+      knownSafetyEventIds.current = new Set(
+        safetyResult.items.map((item) => item.event_id),
+      )
+      setCases(caseList.items)
+      setCaseRows(visiblePage.items)
+      setCaseTotal(visiblePage.total)
+      setSafetyEvents(safetyResult.items)
+      setError(null)
+    } catch (requestError) {
+      if (requestError instanceof ApiClientError && requestError.status === 401) {
+        staffTokenStore.clear()
+        navigate('/doctor/login', { replace: true })
+      }
+    } finally {
+      workspaceRefreshRunning.current = false
+    }
+  }, [appliedCaseQuery, casePage, casePageSize, navigate, t])
+
+  useEffect(() => {
+    const refreshVisibleWorkspace = () => void loadWorkspaceRealtime()
+    const timer = window.setInterval(refreshVisibleWorkspace, 2000)
+    window.addEventListener('focus', refreshVisibleWorkspace)
+    document.addEventListener('visibilitychange', refreshVisibleWorkspace)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshVisibleWorkspace)
+      document.removeEventListener('visibilitychange', refreshVisibleWorkspace)
+    }
+  }, [loadWorkspaceRealtime])
 
   async function createCase(values: { study_code: string }) {
     const token = staffTokenStore.get()
@@ -231,6 +316,7 @@ export function DoctorWorkspacePage() {
       {
         title: t('当前阶段'),
         dataIndex: 'status',
+        width: 190,
         align: 'center',
         responsive: ['md'],
         render: (value: ClinicalCase['status'], record) => (
@@ -249,7 +335,7 @@ export function DoctorWorkspacePage() {
       {
         title: t('最近更新'),
         dataIndex: 'updated_at',
-        width: 130,
+        width: 148,
         align: 'center',
         responsive: ['md'],
         render: (value: string) => <span className="muted-cell">{relativeTime(value, language, t)}</span>,
@@ -307,9 +393,9 @@ export function DoctorWorkspacePage() {
   return (
     <Layout className="workspace-layout">
       {messageContext}
-      <Sider width={248} className="workspace-sider" breakpoint="lg" collapsedWidth={0}>
+      <Sider width={288} className="workspace-sider" breakpoint="lg" collapsedWidth={0}>
         <div className="workspace-brand">
-          <Brand inverse />
+          <Brand compact inverse />
         </div>
         <Menu
           theme="dark"
@@ -346,9 +432,17 @@ export function DoctorWorkspacePage() {
           </div>
           <div className="workspace-header__actions">
             <LanguageSwitcher />
-            <Tooltip title={t('暂无新通知')}>
-              <Badge dot>
-                <Button type="text" shape="circle" icon={<BellOutlined />} />
+            <Tooltip title={safetyEvents.length ? t('查看近期患者安全提醒') : t('暂无新通知')}>
+              <Badge count={safetyEvents.length} size="small" overflowCount={9}>
+                <Button
+                  type="text"
+                  shape="circle"
+                  icon={<BellOutlined />}
+                  onClick={() => {
+                    const latest = safetyEvents[0]
+                    if (latest) navigate(`/doctor/cases/${latest.case_id}`)
+                  }}
+                />
               </Badge>
             </Tooltip>
             <div className="doctor-profile">
@@ -374,6 +468,28 @@ export function DoctorWorkspacePage() {
           </div>
 
           {error && <Alert type="error" showIcon message={t('工作台暂时不可用')} description={error} />}
+          {safetyEvents[0] && (
+            <Alert
+              className="workspace-safety-alert"
+              type={safetyEvents[0].severity === 'critical' ? 'error' : 'warning'}
+              showIcon
+              message={`${safetyEvents[0].study_code} · ${t(
+                safetyEvents[0].event_type === 'patient_discomfort'
+                  ? '患者表示不适，请立即关注'
+                  : '系统拦截了患者提交的敏感调整建议',
+              )}`}
+              description={`${new Date(safetyEvents[0].created_at).toLocaleString(language === 'en' ? 'en-US' : language)} · ${t('点击右侧按钮进入病例处理。')}`}
+              action={(
+                <Button
+                  size="small"
+                  danger={safetyEvents[0].severity === 'critical'}
+                  onClick={() => navigate(`/doctor/cases/${safetyEvents[0].case_id}`)}
+                >
+                  {t('查看病例')}
+                </Button>
+              )}
+            />
+          )}
 
           <section className="stat-grid" aria-label={t('工作台统计')}>
             <Card className="stat-card">

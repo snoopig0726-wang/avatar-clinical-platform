@@ -1,11 +1,7 @@
 import {
-  AuditOutlined,
-  CheckCircleFilled,
-  ClockCircleOutlined,
   LockOutlined,
   MedicineBoxOutlined,
   SafetyCertificateOutlined,
-  SoundOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Button } from 'antd'
@@ -64,7 +60,7 @@ export function LandingPage() {
         <section className="hero-section">
           <div className="hero-glow hero-glow--one" />
           <div className="hero-glow hero-glow--two" />
-          <div className="container hero-grid">
+          <div className="container hero-grid hero-grid--immersive">
             <div className="hero-copy">
               <div className="research-badge">
                 <span className="research-badge__dot" />
@@ -101,63 +97,15 @@ export function LandingPage() {
               </div>
             </div>
 
-            <div className="hero-visual" aria-label={t('声音特征进入受控观测框并形成视觉线索的示意图')}>
-              <div className="observation-card">
-                <div className="observation-card__head">
-                  <div>
-                    <span className="observation-label">{t('我的声音体验')}</span>
-                    <strong>{t('正在形成可表达的图像')}</strong>
-                  </div>
-                  <span className="secure-pill">
-                    <LockOutlined /> {t('安心查看')}
-                  </span>
-                </div>
-
-                <div className="portrait-stage">
-                  <div className="sound-orbit sound-orbit--one" />
-                  <div className="sound-orbit sound-orbit--two" />
-                  <div className="portrait-halo" />
-                  <div className="portrait-figure">
-                    <div className="portrait-figure__hair" />
-                    <div className="portrait-figure__face">
-                      <i className="portrait-eye portrait-eye--left" />
-                      <i className="portrait-eye portrait-eye--right" />
-                      <i className="portrait-nose" />
-                      <i className="portrait-mouth" />
-                    </div>
-                    <div className="portrait-figure__shoulders" />
-                  </div>
-                  <div className="waveform" aria-hidden="true">
-                    {[12, 25, 42, 24, 55, 31, 64, 34, 48, 20, 39, 16].map((height, index) => (
-                      <i key={`${height}-${index}`} style={{ height }} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="observation-card__foot">
-                  <span>
-                    <CheckCircleFilled /> {t('你的描述已记录')}
-                  </span>
-                  <span>
-                    <ClockCircleOutlined /> {t('等待医生陪同查看')}
-                  </span>
-                </div>
-              </div>
-              <div className="floating-note floating-note--top">
-                <SoundOutlined />
-                <span>
-                  <small>{t('你所听见的声音')}</small>
-                  {t('被认真记录与理解')}
-                </span>
-              </div>
-              <div className="floating-note floating-note--bottom">
-                <AuditOutlined />
-                <span>
-                  <small>{t('安心陪伴')}</small>
-                  {t('内容经医生确认后展示')}
-                </span>
-              </div>
-            </div>
+            <figure
+              className="hero-visual hero-photo"
+              aria-label={t('声音特征进入受控观测框并形成视觉线索的示意图')}
+            >
+              <img
+                src="/images/home-clinical-avatar-session.png"
+                alt={t('声音特征进入受控观测框并形成视觉线索的示意图')}
+              />
+            </figure>
           </div>
         </section>
 

@@ -13,6 +13,9 @@ type AccessFrameProps = {
   children: ReactNode
   asideTitle: string
   asideItems: string[]
+  asideImage?: string
+  asideImagePosition?: string
+  surface?: 'doctor' | 'patient' | 'admin'
 }
 
 export function AccessFrame({
@@ -22,11 +25,23 @@ export function AccessFrame({
   children,
   asideTitle,
   asideItems,
+  asideImage,
+  asideImagePosition,
+  surface = 'doctor',
 }: AccessFrameProps) {
   const { t } = useLanguage()
   return (
-    <main className="access-page">
-      <section className="access-aside">
+    <main className={`access-page access-page--${surface}`}>
+      <section className={`access-aside${asideImage ? ' access-aside--image' : ''}`}>
+        {asideImage && (
+          <img
+            className="access-aside__image"
+            src={asideImage}
+            alt=""
+            aria-hidden="true"
+            style={{ objectPosition: asideImagePosition }}
+          />
+        )}
         <Brand inverse />
         <div className="access-aside__content">
           <span className="eyebrow eyebrow--light">{t('专业陪伴 · 安全沟通')}</span>

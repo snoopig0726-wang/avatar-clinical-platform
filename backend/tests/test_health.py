@@ -24,6 +24,6 @@ async def test_contract_meta_reflects_confirmed_product_decisions() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert len(payload["fixed_emotions"]) == 6
-    assert payload["adjustment_limit_per_case"] == 3
+    assert payload["adjustment_limit_per_session"] == 3
     assert payload["retention_days_after_archive"] == 30
     assert payload["initial_structured_risk_classification"] is False

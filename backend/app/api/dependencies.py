@@ -95,6 +95,8 @@ async def authenticate_patient_session(
     session_id: UUID,
     token: str | None,
     session: AsyncSession,
+    *,
+    allow_ended: bool = False,
 ) -> PatientSession:
     if not token:
         raise ApiError(404, "RESOURCE_NOT_FOUND", "会话不存在或无权访问")
@@ -104,7 +106,10 @@ async def authenticate_patient_session(
         patient_session is None
         or patient_session.patient_session_token_hash
         != hash_secret(token, settings.secret_key, "patient-session-token")
-        or patient_session.status in {SessionStatus.ENDED, SessionStatus.EXPIRED}
+        or (
+            patient_session.status in {SessionStatus.ENDED, SessionStatus.EXPIRED}
+            and not (allow_ended and patient_session.status == SessionStatus.ENDED)
+        )
         or is_expired(patient_session.expires_at)
     ):
         raise ApiError(404, "RESOURCE_NOT_FOUND", "会话不存在或无权访问")

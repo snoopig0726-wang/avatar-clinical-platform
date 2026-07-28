@@ -57,6 +57,13 @@ class StartSessionRequest(BaseModel):
     assessment_mode: Literal["new_assessment", "reuse_previous"] | None = None
 
 
+class PatientAvatarFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version_id: UUID
+    satisfied: bool
+
+
 class AdjustmentUsage(BaseModel):
     used: int = 0
     limit: int = 3
@@ -72,6 +79,8 @@ class SessionResponse(BaseModel):
     assessment_mode: Literal["new_assessment", "reuse_previous"]
     has_prior_assessment: bool = False
     current_authorized_version_id: UUID | None = None
+    patient_satisfied_version_id: UUID | None = None
+    patient_satisfied_at: datetime | None = None
     adjustments: AdjustmentUsage
     created_at: datetime
     started_at: datetime | None = None

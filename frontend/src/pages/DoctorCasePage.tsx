@@ -44,6 +44,8 @@ import {
   downloadApiFile,
   type AvatarVersion,
   type AvatarVersionList,
+  type CaseSafetyEvent,
+  type CaseSafetyEventListResponse,
   type ClinicalCase,
   type DoctorAdjustment,
   type DoctorAdjustmentList,
@@ -95,6 +97,15 @@ const generationStatusLabels: Record<AvatarVersion['generation_status'], string>
   cancelled: '已取消',
 }
 
+type CaseFlowState = 'complete' | 'current' | 'pending' | 'skipped'
+
+type CaseFlowStep = {
+  key: string
+  label: string
+  detail: string
+  state: CaseFlowState
+}
+
 export function DoctorCasePage() {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
@@ -105,6 +116,7 @@ export function DoctorCasePage() {
   const [invites, setInvites] = useState<SessionInvite[]>([])
   const [sessions, setSessions] = useState<Record<string, PatientSession>>({})
   const [adjustments, setAdjustments] = useState<DoctorAdjustmentList | null>(null)
+  const [safetyEvents, setSafetyEvents] = useState<CaseSafetyEvent[]>([])
   const [visualFeatures, setVisualFeatures] = useState<VisualFeatures | null>(null)
   const [avatarVersions, setAvatarVersions] = useState<AvatarVersion[]>([])
   const [loading, setLoading] = useState(true)
@@ -117,32 +129,14 @@ export function DoctorCasePage() {
   >(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [working, setWorking] = useState(false)
+  const [adjustTarget, setAdjustTarget] = useState<DoctorAdjustment | null>(null)
+  const [selectedControlledInstruction, setSelectedControlledInstruction] = useState('')
   const [rejectTarget, setRejectTarget] = useState<DoctorAdjustment | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const knownAdjustmentIds = useRef<Set<string> | null>(null)
-
-  const loadAdjustments = useCallback(async () => {
-    const token = staffTokenStore.get()
-    if (!token || !caseId) return
-    try {
-      const result = await apiRequest<DoctorAdjustmentList>(
-        `/cases/${caseId}/adjustment-requests`,
-        { staffToken: token },
-      )
-      const nextIds = new Set(result.items.map((item) => item.request_id))
-      const knownIds = knownAdjustmentIds.current
-      if (knownIds && result.items.some((item) => !knownIds.has(item.request_id))) {
-        messageApi.info(t('收到新的患者调整建议'))
-      }
-      knownAdjustmentIds.current = nextIds
-      setAdjustments(result)
-    } catch (requestError) {
-      if (requestError instanceof ApiClientError && requestError.status === 401) {
-        staffTokenStore.clear()
-        navigate('/doctor/login', { replace: true })
-      }
-    }
-  }, [caseId, messageApi, navigate, t])
+  const knownSafetyEventIds = useRef<Set<number> | null>(null)
+  const knownSatisfiedSessionIds = useRef<Set<string> | null>(null)
+  const liveCaseRefreshRunning = useRef(false)
 
   const loadCase = useCallback(async () => {
     const token = staffTokenStore.get()
@@ -151,7 +145,7 @@ export function DoctorCasePage() {
       return
     }
     try {
-      const [caseResult, inviteResult, adjustmentResult, versionResult, visualResult] = await Promise.all([
+      const [caseResult, inviteResult, adjustmentResult, versionResult, visualResult, safetyResult] = await Promise.all([
         apiRequest<ClinicalCase>(`/cases/${caseId}`, { staffToken: token }),
         apiRequest<InviteListResponse>(`/cases/${caseId}/session-invites`, {
           staffToken: token,
@@ -168,6 +162,10 @@ export function DoctorCasePage() {
           if (requestError instanceof ApiClientError && requestError.status === 409) return null
           throw requestError
         }),
+        apiRequest<CaseSafetyEventListResponse>(
+          `/cases/safety-events/recent?case_id=${caseId}`,
+          { staffToken: token },
+        ),
       ])
       const visibleInvites = inviteResult.items.filter((item) => item.status !== 'revoked')
       const sessionResults = await Promise.all(
@@ -180,9 +178,18 @@ export function DoctorCasePage() {
       setClinicalCase(caseResult)
       setInvites(visibleInvites)
       setSessions(Object.fromEntries(sessionResults.map((item) => [item.session_id, item])))
+      knownSatisfiedSessionIds.current = new Set(
+        sessionResults
+          .filter((item) => item.patient_satisfied_version_id)
+          .map((item) => item.session_id),
+      )
       setAdjustments(adjustmentResult)
       knownAdjustmentIds.current = new Set(
         adjustmentResult.items.map((item) => item.request_id),
+      )
+      setSafetyEvents(safetyResult.items)
+      knownSafetyEventIds.current = new Set(
+        safetyResult.items.map((item) => item.event_id),
       )
       setAvatarVersions(versionResult.items)
       setVisualFeatures(visualResult)
@@ -199,27 +206,128 @@ export function DoctorCasePage() {
     }
   }, [caseId, navigate, t])
 
+  const loadLiveCase = useCallback(async () => {
+    const token = staffTokenStore.get()
+    if (
+      !token
+      || !caseId
+      || document.visibilityState !== 'visible'
+      || liveCaseRefreshRunning.current
+    ) return
+    liveCaseRefreshRunning.current = true
+    try {
+      const [caseResult, inviteResult, adjustmentResult, versionResult, safetyResult] =
+        await Promise.all([
+          apiRequest<ClinicalCase>(`/cases/${caseId}`, { staffToken: token }),
+          apiRequest<InviteListResponse>(`/cases/${caseId}/session-invites`, {
+            staffToken: token,
+          }),
+          apiRequest<DoctorAdjustmentList>(`/cases/${caseId}/adjustment-requests`, {
+            staffToken: token,
+          }),
+          apiRequest<AvatarVersionList>(`/cases/${caseId}/avatar-versions`, {
+            staffToken: token,
+          }),
+          apiRequest<CaseSafetyEventListResponse>(
+            `/cases/safety-events/recent?case_id=${caseId}`,
+            { staffToken: token },
+          ),
+        ])
+      const visibleInvites = inviteResult.items.filter((item) => item.status !== 'revoked')
+      const sessionResults = await Promise.all(
+        visibleInvites
+          .filter((item) => item.session_id)
+          .map((item) =>
+            apiRequest<PatientSession>(`/sessions/${item.session_id}`, {
+              staffToken: token,
+            }),
+          ),
+      )
+
+      const nextAdjustmentIds = new Set(
+        adjustmentResult.items.map((item) => item.request_id),
+      )
+      const knownAdjustments = knownAdjustmentIds.current
+      if (
+        knownAdjustments
+        && adjustmentResult.items.some((item) => !knownAdjustments.has(item.request_id))
+      ) {
+        messageApi.info(t('收到新的患者调整建议'))
+      }
+      knownAdjustmentIds.current = nextAdjustmentIds
+
+      const nextSafetyIds = new Set(safetyResult.items.map((item) => item.event_id))
+      const knownSafetyIds = knownSafetyEventIds.current
+      const newSafetyEvents = knownSafetyIds
+        ? safetyResult.items.filter((item) => !knownSafetyIds.has(item.event_id))
+        : []
+      if (newSafetyEvents.length > 0) {
+        const patientPaused = newSafetyEvents.some(
+          (item) => item.event_type === 'patient_discomfort',
+        )
+        Modal.warning({
+          title: t('患者安全提醒'),
+          content: t(
+            patientPaused
+              ? '患者表示不适，会话已安全暂停，请立即关注。'
+              : '系统拦截了一条包含敏感内容的患者调整建议，请及时关注。',
+          ),
+          okText: t('知道了'),
+        })
+      }
+      knownSafetyEventIds.current = nextSafetyIds
+
+      const nextSatisfiedSessionIds = new Set(
+        sessionResults
+          .filter((item) => item.patient_satisfied_version_id)
+          .map((item) => item.session_id),
+      )
+      const knownSatisfiedSessions = knownSatisfiedSessionIds.current
+      if (
+        knownSatisfiedSessions
+        && sessionResults.some(
+          (item) =>
+            item.patient_satisfied_version_id
+            && !knownSatisfiedSessions.has(item.session_id),
+        )
+      ) {
+        messageApi.success({
+          content: t('患者满意当前图片'),
+          duration: 3,
+        })
+      }
+      knownSatisfiedSessionIds.current = nextSatisfiedSessionIds
+
+      setClinicalCase(caseResult)
+      setInvites(visibleInvites)
+      setSessions(Object.fromEntries(sessionResults.map((item) => [item.session_id, item])))
+      setAdjustments(adjustmentResult)
+      setAvatarVersions(versionResult.items)
+      setSafetyEvents(safetyResult.items)
+      setError(null)
+    } catch (requestError) {
+      if (requestError instanceof ApiClientError && requestError.status === 401) {
+        staffTokenStore.clear()
+        navigate('/doctor/login', { replace: true })
+      }
+    } finally {
+      liveCaseRefreshRunning.current = false
+    }
+  }, [caseId, messageApi, navigate, t])
+
   useEffect(() => void loadCase(), [loadCase])
 
   useEffect(() => {
-    if (!avatarVersions.some((item) => ['queued', 'generating', 'checking'].includes(item.generation_status))) return
-    const timer = window.setInterval(() => void loadCase(), 3000)
-    return () => window.clearInterval(timer)
-  }, [avatarVersions, loadCase])
-
-  useEffect(() => {
-    const refreshVisibleAdjustments = () => {
-      if (document.visibilityState === 'visible') void loadAdjustments()
-    }
-    const timer = window.setInterval(refreshVisibleAdjustments, 3000)
-    window.addEventListener('focus', refreshVisibleAdjustments)
-    document.addEventListener('visibilitychange', refreshVisibleAdjustments)
+    const refreshVisibleCase = () => void loadLiveCase()
+    const timer = window.setInterval(refreshVisibleCase, 2000)
+    window.addEventListener('focus', refreshVisibleCase)
+    document.addEventListener('visibilitychange', refreshVisibleCase)
     return () => {
       window.clearInterval(timer)
-      window.removeEventListener('focus', refreshVisibleAdjustments)
-      document.removeEventListener('visibilitychange', refreshVisibleAdjustments)
+      window.removeEventListener('focus', refreshVisibleCase)
+      document.removeEventListener('visibilitychange', refreshVisibleCase)
     }
-  }, [loadAdjustments])
+  }, [loadLiveCase])
 
   async function createInvite() {
     const token = staffTokenStore.get()
@@ -331,8 +439,11 @@ export function DoctorCasePage() {
 
   async function reviewAdjustment(
     target: DoctorAdjustment,
-    decision: 'approve_as_is' | 'reject',
-    reason?: string,
+    decision: 'approve_as_is' | 'approve_edited' | 'reject',
+    options?: {
+      controlledInstruction?: string
+      rejectionReason?: string
+    },
   ) {
     const token = staffTokenStore.get()
     if (!token) return
@@ -344,10 +455,16 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('adjustment-review'),
         body: {
           decision,
-          controlled_instruction: null,
-          rejection_reason: decision === 'reject' ? reason?.trim() : null,
+          controlled_instruction:
+            decision === 'approve_edited' ? options?.controlledInstruction : null,
+          rejection_reason:
+            decision === 'reject' ? options?.rejectionReason?.trim() : null,
         },
       })
+      if (decision === 'approve_edited') {
+        setAdjustTarget(null)
+        setSelectedControlledInstruction('')
+      }
       if (decision === 'reject') {
         setRejectTarget(null)
         setRejectionReason('')
@@ -602,10 +719,184 @@ export function DoctorCasePage() {
         ? !['ended', 'expired'].includes(patientSession.status)
         : false,
     )
-  const currentInviteRedeemed = Boolean(currentSession)
-  const currentSessionStarted = Boolean(currentSession?.started_at)
-  const currentVisualDirectionConfirmed = Boolean(currentSessionStarted && visualFeatures)
-  const currentAvatarReady = Boolean(currentSessionStarted && avatarVersions.length)
+  const flowInvite = invites[0] ?? null
+  const flowSession =
+    flowInvite?.session_id ? sessions[flowInvite.session_id] ?? null : null
+  const flowStartedAt = flowSession?.started_at
+    ? new Date(flowSession.started_at).getTime()
+    : null
+  const flowVersions = flowStartedAt === null
+    ? []
+    : avatarVersions.filter(
+        (version) =>
+          version.version_id === flowSession?.current_authorized_version_id
+          || new Date(version.created_at).getTime() >= flowStartedAt,
+      )
+  const flowAdjustments = flowStartedAt === null
+    ? []
+    : (adjustments?.items ?? []).filter(
+        (item) => new Date(item.submitted_at).getTime() >= flowStartedAt,
+      )
+  const flowGenerationRunning = flowVersions.some((item) =>
+    ['queued', 'generating', 'checking'].includes(item.generation_status),
+  )
+  const hasRedeemedInvite = Boolean(flowSession)
+  const hasStartedSession = Boolean(flowSession?.started_at)
+  const hasConfirmedVisualDirection = Boolean(
+    hasStartedSession
+    && (
+      flowSession?.assessment_mode === 'reuse_previous'
+      || (
+        visualFeatures?.is_doctor_confirmed
+        && visualFeatures.confirmed_at
+        && new Date(visualFeatures.confirmed_at).getTime() >= (flowStartedAt ?? 0)
+      )
+    ),
+  )
+  const hasGeneratedImage = flowVersions.some(
+    (version) =>
+      Boolean(version.image_url)
+      || ['pending_doctor_review', 'approved', 'rejected'].includes(
+        version.generation_status,
+      ),
+  )
+  const hasReviewedImage = flowVersions.some((version) =>
+    ['approved', 'rejected'].includes(version.generation_status),
+  )
+  const hasPatientFeedback = Boolean(
+    flowAdjustments.length || flowSession?.patient_satisfied_version_id,
+  )
+  const hasPendingPatientFeedback = flowAdjustments.some(
+    (item) => item.status === 'pending_doctor_review',
+  )
+  const hasOpenSession = Boolean(
+    flowSession
+    && ['waiting_doctor', 'active', 'paused'].includes(flowSession.status),
+  )
+  const hasEndedSession = flowSession?.status === 'ended'
+  const caseArchived = clinicalCase?.status === 'archived'
+
+  const baseCaseFlowSteps: CaseFlowStep[] = clinicalCase
+    ? [
+        {
+          key: 'case-created',
+          label: '病例已创建并归属当前医生',
+          detail: '病例基础信息已建立',
+          state: 'complete',
+        },
+        {
+          key: 'invite-redeemed',
+          label: '患者兑换一次性邀请码',
+          detail: hasRedeemedInvite ? '患者已进入监督会话' : '等待患者兑换邀请码',
+          state: hasRedeemedInvite ? 'complete' : 'pending',
+        },
+        {
+          key: 'session-started',
+          label: '医生确认当面知情同意并启动',
+          detail: hasStartedSession ? '监督会话已经启动' : '等待医生启动监督会话',
+          state: hasStartedSession ? 'complete' : 'pending',
+        },
+        {
+          key: 'visual-direction',
+          label: '记录声音体验并确认视觉表达方向',
+          detail: hasConfirmedVisualDirection
+            ? '声音记录与视觉方向已经确认'
+            : '等待完成声音记录与视觉方向确认',
+          state: hasConfirmedVisualDirection ? 'complete' : 'pending',
+        },
+        {
+          key: 'image-generated',
+          label: '已生成图片',
+          detail: hasGeneratedImage
+            ? '至少已有一个图像版本生成完成'
+            : flowGenerationRunning
+              ? '图像正在生成与安全检查中'
+              : '等待生成首个图像版本',
+          state: hasGeneratedImage ? 'complete' : 'pending',
+        },
+        {
+          key: 'image-reviewed',
+          label: '医生完成图片审核',
+          detail: hasReviewedImage
+            ? '至少已有一个图像版本完成医生审核'
+            : flowVersions.some(
+                (version) => version.generation_status === 'pending_doctor_review',
+              )
+              ? '已有图片等待医生审核'
+              : '等待生成图片后进行审核',
+          state: hasReviewedImage ? 'complete' : 'pending',
+        },
+        {
+          key: 'patient-feedback',
+          label: '患者修改意见',
+          detail: hasPendingPatientFeedback
+            ? '患者已提交修改意见，等待医生处理'
+            : hasPatientFeedback
+              ? '患者修改意见已处理或进入图像调整'
+              : hasEndedSession || caseArchived
+                ? '本次流程中患者未提交修改意见'
+                : '等待患者查看图片并反馈',
+          state: hasPendingPatientFeedback
+            ? 'current'
+            : hasPatientFeedback
+              ? 'complete'
+              : hasEndedSession || caseArchived
+                ? 'skipped'
+                : 'pending',
+        },
+        {
+          key: 'session-ended',
+          label: '会话结束',
+          detail: hasOpenSession
+            ? '当前仍有患者会话进行中'
+            : hasEndedSession
+              ? '患者会话已经结束'
+              : '尚未产生需要结束的患者会话',
+          state: hasEndedSession && !hasOpenSession
+            ? 'complete'
+            : !flowSession && caseArchived
+              ? 'skipped'
+              : 'pending',
+        },
+        {
+          key: 'case-archived',
+          label: '归档完成',
+          detail: caseArchived
+            ? '病例已归档并进入数据保留倒计时'
+            : clinicalCase.status === 'completed'
+              ? '病例已完成，可以进行归档'
+              : '病例完成后可以归档',
+          state: caseArchived ? 'complete' : 'pending',
+        },
+      ]
+    : []
+
+  const caseFlowSteps = caseArchived
+    ? baseCaseFlowSteps.map((step) => ({
+        ...step,
+        state: step.state === 'pending' ? 'skipped' as const : step.state,
+      }))
+    : (() => {
+        if (baseCaseFlowSteps.some((step) => step.state === 'current')) {
+          return baseCaseFlowSteps
+        }
+        const currentIndex = baseCaseFlowSteps.findIndex(
+          (step) => step.state === 'pending',
+        )
+        return baseCaseFlowSteps.map((step, index) => ({
+          ...step,
+          state: index === currentIndex ? 'current' as const : step.state,
+        }))
+      })()
+
+  const latestSafetyEvent =
+    currentSession?.status === 'paused'
+      ? safetyEvents.find(
+          (item) =>
+            item.session_id === currentSession.session_id
+            && item.event_type === 'patient_discomfort',
+        ) ?? safetyEvents[0]
+      : safetyEvents[0]
 
   if (loading) {
     return <div className="route-fallback"><Spin size="large" tip={t('正在加载病例…')} /></div>
@@ -664,6 +955,24 @@ export function DoctorCasePage() {
               />
             )}
 
+            {latestSafetyEvent && (
+              <Alert
+                className="case-safety-alert"
+                type={latestSafetyEvent.severity === 'critical' ? 'error' : 'warning'}
+                showIcon
+                message={t(
+                  latestSafetyEvent.event_type === 'patient_discomfort'
+                    ? '患者表示不适，请立即关注'
+                    : '系统拦截了患者提交的敏感调整建议',
+                )}
+                description={`${new Date(latestSafetyEvent.created_at).toLocaleString(dateLocale)} · ${t(
+                  latestSafetyEvent.event_type === 'patient_discomfort'
+                    ? '会话已自动安全暂停，请先与患者确认状态，再由医生决定是否恢复。'
+                    : '敏感内容未进入生图流程，原始敏感文本不会在提醒中展示。',
+                )}`}
+              />
+            )}
+
             <div className="case-detail-grid">
               <Card title={t('患者会话与邀请码')} className="case-session-card" extra={<Button type="primary" icon={<KeyOutlined />} disabled={clinicalCase.status === 'archived'} loading={working} onClick={() => void createInvite()}>{t('创建邀请码')}</Button>}>
                 {invites.length === 0 ? (
@@ -693,6 +1002,11 @@ export function DoctorCasePage() {
                           </div>
                           <div className="invite-list__actions">
                             <Tag>{t(inviteLabels[invite.status])}</Tag>
+                            {patientSession?.patient_satisfied_version_id && (
+                              <Tag color="success" icon={<CheckCircleOutlined />}>
+                                {t('已生成图片')}
+                              </Tag>
+                            )}
                             {invite.code && <Button type="text" icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(invite.code!)}>{t('复制')}</Button>}
                             {invite.status === 'issued' && (
                               <Button
@@ -765,57 +1079,38 @@ export function DoctorCasePage() {
 
               <Card title={t('当前流程')} className="case-flow-card">
                 <Timeline
-                  items={[
-                    {
-                      color: 'green',
-                      dot: <span className="case-flow-dot case-flow-dot--complete" />,
-                      children: t('病例已创建并归属当前医生'),
-                    },
-                    {
-                      color: currentInviteRedeemed ? 'green' : 'gray',
-                      dot: (
-                        <span
-                          className={`case-flow-dot ${
-                            currentInviteRedeemed ? 'case-flow-dot--complete' : ''
-                          }`}
-                        />
-                      ),
-                      children: t('患者兑换一次性邀请码'),
-                    },
-                    {
-                      color: currentSessionStarted ? 'green' : 'gray',
-                      dot: (
-                        <span
-                          className={`case-flow-dot ${
-                            currentSessionStarted ? 'case-flow-dot--complete' : ''
-                          }`}
-                        />
-                      ),
-                      children: t('医生确认当面知情同意并启动'),
-                    },
-                    {
-                      color: currentVisualDirectionConfirmed ? 'green' : 'gray',
-                      dot: (
-                        <span
-                          className={`case-flow-dot ${
-                            currentVisualDirectionConfirmed ? 'case-flow-dot--complete' : ''
-                          }`}
-                        />
-                      ),
-                      children: t('记录声音体验并确认视觉表达方向'),
-                    },
-                    {
-                      color: currentAvatarReady ? 'green' : 'gray',
-                      dot: (
-                        <span
-                          className={`case-flow-dot ${
-                            currentAvatarReady ? 'case-flow-dot--complete' : ''
-                          }`}
-                        />
-                      ),
-                      children: t('生成视觉表达，完成安全检查与医生授权'),
-                    },
-                  ]}
+                  items={caseFlowSteps.map((step) => ({
+                    color: step.state === 'complete' ? 'green' : 'gray',
+                    dot: (
+                      <span
+                        className={`case-flow-dot case-flow-dot--${step.state}`}
+                        aria-hidden="true"
+                      />
+                    ),
+                    children: (
+                      <div
+                        className={`case-flow-step case-flow-step--${step.state}`}
+                        data-step={step.key}
+                        data-state={step.state}
+                      >
+                        <div className="case-flow-step__heading">
+                          <strong>{t(step.label)}</strong>
+                          <span className="case-flow-step__status">
+                            {t(
+                              step.state === 'complete'
+                                ? '已完成'
+                                : step.state === 'current'
+                                  ? '当前步骤'
+                                  : step.state === 'skipped'
+                                    ? '未发生'
+                                    : '待进行',
+                            )}
+                          </span>
+                        </div>
+                        <small>{t(step.detail)}</small>
+                      </div>
+                    ),
+                  }))}
                 />
                 <Descriptions column={1} size="small" bordered>
                   <Descriptions.Item label={t('创建时间')}>{new Date(clinicalCase.created_at).toLocaleString(dateLocale)}</Descriptions.Item>
@@ -892,7 +1187,8 @@ export function DoctorCasePage() {
                         </div>
                         <p>{t('依据医生确认的视觉方向生成')}</p>
                         {version.failure_code && <Alert type="warning" showIcon message={`${t('失败代码：')}${version.failure_code}`} />}
-                        {['queued', 'generating', 'checking'].includes(version.generation_status) && (
+                        {clinicalCase.status !== 'archived'
+                          && ['queued', 'generating', 'checking'].includes(version.generation_status) && (
                           <Button
                             danger
                             icon={<StopOutlined />}
@@ -911,7 +1207,8 @@ export function DoctorCasePage() {
                             {t('取消生成')}
                           </Button>
                         )}
-                        {version.generation_status === 'failed' && (
+                        {clinicalCase.status !== 'archived'
+                          && version.generation_status === 'failed' && (
                           <Button
                             icon={<ReloadOutlined />}
                             loading={working}
@@ -921,7 +1218,8 @@ export function DoctorCasePage() {
                             {t('按相同特征重试')}
                           </Button>
                         )}
-                        {version.generation_status === 'pending_doctor_review' && (
+                        {clinicalCase.status !== 'archived'
+                          && version.generation_status === 'pending_doctor_review' && (
                           <Space wrap>
                             <Button type="primary" icon={<SafetyCertificateOutlined />} loading={working} onClick={() => void reviewAvatar(version, 'approve')}>
                               {t('审核通过')}
@@ -931,7 +1229,8 @@ export function DoctorCasePage() {
                             </Button>
                           </Space>
                         )}
-                        {version.generation_status === 'approved' && (
+                        {clinicalCase.status !== 'archived'
+                          && version.generation_status === 'approved' && (
                           <Space wrap>
                             {version.is_authorized ? (
                               <>
@@ -967,20 +1266,29 @@ export function DoctorCasePage() {
                                 {t('选择此版回退')}
                               </Button>
                             )}
-                            {version.snapshot_available && version.image_url && (
-                              <Button icon={<DownloadOutlined />} loading={working} onClick={() => void downloadVersion(version)}>
-                                {t('下载此版')}
-                              </Button>
-                            )}
                           </Space>
+                        )}
+                        {version.snapshot_available
+                          && version.image_url
+                          && (
+                            clinicalCase.status === 'archived'
+                            || version.generation_status === 'approved'
+                          ) && (
+                          <Button icon={<DownloadOutlined />} loading={working} onClick={() => void downloadVersion(version)}>
+                            {t('下载此版')}
+                          </Button>
                         )}
                         {['approved', 'rejected', 'failed', 'cancelled'].includes(version.generation_status) && (
                           <Button
                             danger
                             icon={<DeleteOutlined />}
                             loading={working}
-                            disabled={version.is_authorized}
-                            title={version.is_authorized ? t('患者当前正在查看，不能删除') : undefined}
+                            disabled={clinicalCase.status !== 'archived' && version.is_authorized}
+                            title={
+                              clinicalCase.status !== 'archived' && version.is_authorized
+                                ? t('患者当前正在查看，不能删除')
+                                : undefined
+                            }
                             onClick={() =>
                               Modal.confirm({
                                 title: language === 'en'
@@ -994,7 +1302,9 @@ export function DoctorCasePage() {
                               })
                             }
                           >
-                            {version.is_authorized ? t('患者查看中，禁止删除') : t('删除图像')}
+                            {clinicalCase.status !== 'archived' && version.is_authorized
+                              ? t('患者查看中，禁止删除')
+                              : t('删除图像')}
                           </Button>
                         )}
                       </div>
@@ -1007,7 +1317,7 @@ export function DoctorCasePage() {
             <Card
               className="doctor-adjustment-card"
               title={t('患者反馈与图像调整')}
-              extra={<Tag>{adjustments?.used ?? 0} / {adjustments?.limit ?? 3} {t('次额度已使用')}</Tag>}
+              extra={<Tag>{flowAdjustments.length} / 3 {t('次额度已使用')}</Tag>}
             >
               {!adjustments || adjustments.items.length === 0 ? (
                 <Empty description={t('患者尚未提交调整建议')} />
@@ -1059,6 +1369,18 @@ export function DoctorCasePage() {
                             onClick={() => void reviewAdjustment(item, 'approve_as_is')}
                           >
                             {t('接受系统研判')}
+                          </Button>
+                          <Button
+                            icon={<FormOutlined />}
+                            loading={working}
+                            onClick={() => {
+                              setAdjustTarget(item)
+                              setSelectedControlledInstruction(
+                                item.suggested_controlled_instruction,
+                              )
+                            }}
+                          >
+                            {t('医生调整')}
                           </Button>
                           <Button
                             danger
@@ -1151,6 +1473,50 @@ export function DoctorCasePage() {
       </Modal>
 
       <Modal
+        title={t('调整患者描述')}
+        open={Boolean(adjustTarget)}
+        okText={t('确认调整并接受')}
+        cancelText={t('取消')}
+        okButtonProps={{
+          disabled: !selectedControlledInstruction,
+          loading: working,
+        }}
+        onCancel={() => {
+          setAdjustTarget(null)
+          setSelectedControlledInstruction('')
+        }}
+        onOk={() => {
+          if (adjustTarget && selectedControlledInstruction) {
+            void reviewAdjustment(adjustTarget, 'approve_edited', {
+              controlledInstruction: selectedControlledInstruction,
+            })
+          }
+        }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message={t('保留患者原话，由医生选择更准确的受控表达')}
+          description={t('患者原始描述不会被覆盖；后续生图只使用医生确认后的低刺激受控指令。')}
+        />
+        <div className="doctor-adjustment-modal__original">
+          <strong>{t('患者原始描述')}</strong>
+          <blockquote>{adjustTarget?.instruction}</blockquote>
+        </div>
+        <Radio.Group
+          className="doctor-adjustment-options"
+          value={selectedControlledInstruction}
+          onChange={(event) => setSelectedControlledInstruction(event.target.value)}
+        >
+          {adjustTarget?.controlled_options.map((option) => (
+            <Radio key={option} value={option}>
+              {option}
+            </Radio>
+          ))}
+        </Radio.Group>
+      </Modal>
+
+      <Modal
         title={t('填写拒绝理由')}
         open={Boolean(rejectTarget)}
         okText={t('确认拒绝')}
@@ -1165,7 +1531,11 @@ export function DoctorCasePage() {
           setRejectionReason('')
         }}
         onOk={() => {
-          if (rejectTarget) void reviewAdjustment(rejectTarget, 'reject', rejectionReason)
+          if (rejectTarget) {
+            void reviewAdjustment(rejectTarget, 'reject', {
+              rejectionReason,
+            })
+          }
         }}
       >
         <Alert

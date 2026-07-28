@@ -166,6 +166,10 @@ class PatientSession(Base):
     consent_confirmed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.user_id"))
     consent_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consent_version: Mapped[str | None] = mapped_column(String(50))
+    patient_satisfied_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("avatar_versions.version_id")
+    )
+    patient_satisfied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -343,7 +347,11 @@ class AdjustmentRequest(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        UniqueConstraint("case_id", "sequence_no", name="uq_adjustment_case_sequence"),
+        UniqueConstraint(
+            "session_id",
+            "sequence_no",
+            name="uq_adjustment_session_sequence",
+        ),
         Index("ix_adjustment_case_status", "case_id", "doctor_status"),
         Index("ix_adjustment_session_submitted", "session_id", "submitted_at"),
     )

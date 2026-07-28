@@ -35,6 +35,7 @@ export function DoctorLoginPage() {
 
   return (
     <AccessFrame
+      surface="doctor"
       eyebrow={t('医护人员入口')}
       title={t('登录医护工作台')}
       description={t('继续管理患者会话、记录声音体验，并审核用于医患沟通的视觉表达。')}
@@ -44,6 +45,8 @@ export function DoctorLoginPage() {
         t('结合患者反馈，持续观察症状与生活影响的变化'),
         t('所有图像均需经过安全检查和医生确认后再展示'),
       ]}
+      asideImage="/images/doctor-guided-tablet-session.png"
+      asideImagePosition="center 58%"
     >
       {error && <Alert className="access-alert" type="error" showIcon message={error} />}
       <Form

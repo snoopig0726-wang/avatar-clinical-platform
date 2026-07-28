@@ -235,16 +235,16 @@ def build_controlled_instruction(raw_instruction: str) -> str:
     return build_controlled_options(raw_instruction)[0]
 
 
-async def adjustment_usage(session: AsyncSession, case_id: UUID) -> AdjustmentUsage:
+async def adjustment_usage(session: AsyncSession, session_id: UUID) -> AdjustmentUsage:
     used = await session.scalar(
         select(func.count(AdjustmentRequest.request_id)).where(
-            AdjustmentRequest.case_id == case_id,
+            AdjustmentRequest.session_id == session_id,
             AdjustmentRequest.risk_status == "passed",
         )
     )
     pending = await session.scalar(
         select(func.count(AdjustmentRequest.request_id)).where(
-            AdjustmentRequest.case_id == case_id,
+            AdjustmentRequest.session_id == session_id,
             AdjustmentRequest.doctor_status.in_(PENDING_ADJUSTMENT_STATUSES),
         )
     )

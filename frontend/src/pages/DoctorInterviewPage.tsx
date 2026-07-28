@@ -14,7 +14,9 @@ import {
   Checkbox,
   Col,
   Form,
+  Modal,
   Progress,
+  Radio,
   Row,
   Select,
   Slider,
@@ -24,7 +26,7 @@ import {
   Tag,
   message,
 } from 'antd'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Brand } from '../components/Brand'
@@ -33,7 +35,9 @@ import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
+  type CaseSafetyEventListResponse,
   newIdempotencyKey,
+  type PatientSession,
   staffTokenStore,
   type VisualFeatures,
   type VoiceFeatureContract,
@@ -97,6 +101,9 @@ export function DoctorInterviewPage() {
   const [questionIndex, setQuestionIndex] = useState(0)
   const [restoreSystem, setRestoreSystem] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const knownSafetyEventIds = useRef<Set<number> | null>(null)
+  const knownSessionStatus = useRef<PatientSession['status'] | null>(null)
+  const safetyRefreshRunning = useRef(false)
 
   const loadData = useCallback(async () => {
     const token = staffTokenStore.get()
@@ -131,6 +138,79 @@ export function DoctorInterviewPage() {
   }, [caseId, navigate, sessionId, t, visualForm, voiceForm])
 
   useEffect(() => void loadData(), [loadData])
+
+  const loadSafetyState = useCallback(async () => {
+    const token = staffTokenStore.get()
+    if (
+      !token
+      || !caseId
+      || !sessionId
+      || document.visibilityState !== 'visible'
+      || safetyRefreshRunning.current
+    ) return
+    safetyRefreshRunning.current = true
+    try {
+      const [sessionResult, safetyResult] = await Promise.all([
+        apiRequest<PatientSession>(`/sessions/${sessionId}`, { staffToken: token }),
+        apiRequest<CaseSafetyEventListResponse>(
+          `/cases/safety-events/recent?case_id=${caseId}`,
+          { staffToken: token },
+        ),
+      ])
+      const newSafetyEvents = knownSafetyEventIds.current
+        ? safetyResult.items.filter(
+            (item) => !knownSafetyEventIds.current?.has(item.event_id),
+          )
+        : []
+      const newlyPaused =
+        sessionResult.status === 'paused' && knownSessionStatus.current !== 'paused'
+      const sensitiveAdjustment = newSafetyEvents.some(
+        (item) => item.event_type === 'sensitive_adjustment',
+      )
+      if (newlyPaused || sensitiveAdjustment) {
+        Modal.warning({
+          title: t('患者安全提醒'),
+          content: t(
+            newlyPaused
+              ? '患者表示不适，会话已安全暂停，请立即关注。'
+              : '系统拦截了一条包含敏感内容的患者调整建议，请及时关注。',
+          ),
+          okText: t('返回病例'),
+          onOk: () => navigate(`/doctor/cases/${caseId}`),
+        })
+      } else if (
+        sessionResult.status === 'ended'
+        && knownSessionStatus.current
+        && knownSessionStatus.current !== 'ended'
+      ) {
+        messageApi.info(t('患者会话已结束'))
+      }
+      knownSessionStatus.current = sessionResult.status
+      knownSafetyEventIds.current = new Set(
+        safetyResult.items.map((item) => item.event_id),
+      )
+    } catch (requestError) {
+      if (requestError instanceof ApiClientError && requestError.status === 401) {
+        staffTokenStore.clear()
+        navigate('/doctor/login', { replace: true })
+      }
+    } finally {
+      safetyRefreshRunning.current = false
+    }
+  }, [caseId, messageApi, navigate, sessionId, t])
+
+  useEffect(() => {
+    const refreshVisibleSafety = () => void loadSafetyState()
+    void refreshVisibleSafety()
+    const timer = window.setInterval(refreshVisibleSafety, 2000)
+    window.addEventListener('focus', refreshVisibleSafety)
+    document.addEventListener('visibilitychange', refreshVisibleSafety)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshVisibleSafety)
+      document.removeEventListener('visibilitychange', refreshVisibleSafety)
+    }
+  }, [loadSafetyState])
 
   async function saveCurrentQuestion(options?: { advance?: boolean; extract?: boolean }) {
     const token = staffTokenStore.get()
@@ -247,12 +327,16 @@ export function DoctorInterviewPage() {
     const values = contract?.enums[questionKey] ?? []
     return (
       <Form.Item name={questionKey} rules={rules}>
-        <Select
+        <Radio.Group
+          className="guided-option-grid"
           aria-label={t(labels[questionKey])}
-          allowClear={!required}
-          placeholder={t(required ? '请选择' : '未填写')}
-          options={values.map((value) => ({ value, label: t(enumLabels[value]) }))}
-        />
+        >
+          {values.map((value) => (
+            <Radio key={value} value={value}>
+              {t(enumLabels[value])}
+            </Radio>
+          ))}
+        </Radio.Group>
       </Form.Item>
     )
   }

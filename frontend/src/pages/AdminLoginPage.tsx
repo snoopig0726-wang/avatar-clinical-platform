@@ -33,6 +33,7 @@ export function AdminLoginPage() {
 
   return (
     <AccessFrame
+      surface="admin"
       eyebrow={t('系统管理员')}
       title={t('登录平台管理后台')}
       description={t('管理医护账号、安全规则、平台运行状态、操作审计和数据保留。')}

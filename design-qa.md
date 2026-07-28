@@ -1,75 +1,67 @@
 # Design QA
 
-## Reference target
+## Comparison target
 
-- Visual target: `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-landing-desktop.png`
-- State: patient-facing landing page, fully loaded
-- Browser: Microsoft Edge through Playwright
-- CSS viewport: 1600 × 1000
-- Captured image: 1600 × 2050 (full page)
-- Design intent carried across the product: warm clinical green palette, large and calm typography, patient-first language, soft cards, restrained borders, clear primary actions, and explicit professional-support boundaries.
+- Source visual truth: `D:\xwechat_files\wxid_phfkoz2s1svp11_64f7\temp\RWTemp\2026-07\ee745c3c4cab68f85d5bf9b597f7de0c\f91df14237a7741e5c0ae0d678e5a118.png`
+- Source pixels: 1848 × 1200.
+- Implementation: `http://localhost:5173`
+- Browser: Microsoft Edge through Playwright.
+- Desktop viewport: 1600 × 1000 CSS pixels, device scale factor 1.
+- Mobile viewport: 390 × 844 CSS pixels, device scale factor 1.
+- State: public landing page, empty patient invitation form, and empty clinician login form.
+- API usage: none. No form was submitted and no image-generation request was made.
 
-## Implementation captures
+## Rendered evidence
 
-Desktop captures used a 1600 × 1000 CSS viewport:
+| Surface | Desktop screenshot | Pixel dimensions | Mobile screenshot | Pixel dimensions |
+| --- | --- | --- | --- | --- |
+| Landing | `tmp/product-design/home-background-desktop.png` | 1600 × 2443 | `tmp/product-design/home-background-mobile.png` | 390 × 4138 |
+| Patient invitation | `tmp/product-design/patient-background-desktop.png` | 1600 × 1000 | `tmp/product-design/patient-background-mobile.png` | 390 × 1002 |
+| Clinician login | `tmp/product-design/doctor-background-desktop.png` | 1600 × 1000 | `tmp/product-design/doctor-background-mobile.png` | 390 × 953 |
 
-| Surface | State | Screenshot | Pixel size |
-| --- | --- | --- | --- |
-| Landing | fully loaded | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-landing-desktop.png` | 1600 × 2050 |
-| Patient invite | empty invitation form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-patient-invite-desktop.png` | 1600 × 1000 |
-| Doctor login | empty login form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-login-desktop.png` | 1600 × 1000 |
-| Doctor application | empty application form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-apply-desktop.png` | 1600 × 1057 |
-| Administrator login | empty login form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-admin-login-desktop.png` | 1600 × 1000 |
-| Doctor workspace | authenticated demo doctor with cases | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-workspace-desktop.png` | 1600 × 1295 |
-| Doctor case | active demo case with session and versions | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-case-desktop.png` | 1600 × 2049 |
-| Doctor interview | Q8 and visual direction form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-interview-desktop.png` | 1600 × 1847 |
-| Administrator dashboard | authenticated overview tab | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-admin-dashboard-desktop.png` | 1600 × 1136 |
+The full-page landing capture was cropped to its first 1600 × 1000 pixels for normalized comparison. The two access pages already match the comparison viewport.
 
-Mobile captures used a 390 × 844 CSS viewport at the Edge mobile project device scale:
+## Full-view comparison evidence
 
-| Surface | State | Screenshot | Captured pixels |
-| --- | --- | --- | --- |
-| Landing | fully loaded | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-landing-mobile.png` | 1073 × 10953 |
-| Patient invite | empty invitation form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-patient-invite-mobile.png` | 1073 × 2453 |
-| Doctor workspace | authenticated demo doctor with cases | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-workspace-mobile.png` | 1073 × 6105 |
-| Doctor case | active demo case | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-case-mobile.png` | 1073 × 10406 |
-| Doctor interview | Q8 and visual direction form | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-doctor-interview-mobile.png` | 1073 × 7692 |
-| Administrator dashboard | authenticated overview tab | `C:\Users\lg140\AppData\Local\Temp\avatar-design-final-admin-dashboard-mobile.png` | 1073 × 5206 |
+Each file contains the matching prototype region and implementation in one 2072 × 715 image:
 
-## Combined comparison inputs
+- `tmp/product-design/home-background-comparison.png`
+- `tmp/product-design/patient-background-comparison.png`
+- `tmp/product-design/doctor-background-comparison.png`
 
-Each comparison places the 1600 × 1000 landing target crop on the left and the matching 1600 × 1000 implementation crop on the right:
+Focused comparisons were not required because the hero, image crop, overlaid copy, form, and safety panel are all legible at the normalized full-view scale.
 
-- Patient access: `C:\Users\lg140\AppData\Local\Temp\avatar-design-comparison-access.png`
-- Doctor workspace: `C:\Users\lg140\AppData\Local\Temp\avatar-design-comparison-workspace.png`
-- Doctor case: `C:\Users\lg140\AppData\Local\Temp\avatar-design-comparison-case.png`
-- Administrator dashboard: `C:\Users\lg140\AppData\Local\Temp\avatar-design-comparison-admin.png`
+## Findings
 
-## QA history
+- Fonts and typography: passed. Existing product typography and hierarchy remain intact; overlaid text uses sufficient weight and text shadow on photographic areas.
+- Spacing and layout rhythm: passed. The landing hero now reads as one integrated visual frame; access-page headings and safety lists retain balanced spacing over the background imagery.
+- Colors and visual tokens: passed. Pale-mint and clinical-green overlays match the established product palette while preserving contrast.
+- Image quality and asset fidelity: passed. The supplied raster assets remain sharp, undistorted, and intentionally cropped. No placeholder or code-drawn replacement is used.
+- Copy and content: passed. Existing localized content and operational labels are unchanged.
+- Responsive behavior: passed. All three routes have zero horizontal overflow at 1600 px and 390 px. The landing image remains a subtle background on mobile; access-page forms remain first at phone width.
+- Runtime and interaction: passed. All routes returned HTTP 200 with no console or page errors. Public navigation and required form fields were verified without submitting forms.
 
-### Pass 1 — typography, content, hierarchy
+## Comparison history
 
-- Increased the global body and control scale and removed remaining 9–12 px operational text from primary reading surfaces.
-- Rewrote patient, doctor, and administrator copy around patient understanding, professional support, treatment follow-up, safety, and authorization.
-- Replaced provider/model-facing labels in normal UI with task-oriented language.
-- Matched the landing target’s green, pale-mint, white, border, radius, and elevation treatment across access, workspace, case, interview, and administration screens.
+### Pass 1
 
-### Pass 2 — responsive and interaction review
+- [P1] The landing image appeared as an independent image card instead of a background integrated with the hero copy.
+- [P2] Access-page safety points sat directly on the photograph and did not reproduce the prototype’s grouped dark information panel.
 
-- Found that the access-page story panel appeared before the patient’s form on mobile. Hid the desktop-only story panel at phone widths and added a compact brand header so the core action appears immediately.
-- Found a collapsed workspace boundary label overlapping mobile content. Removed that label in the collapsed state and added space for the menu trigger.
-- Verified desktop and mobile public navigation, patient invitation entry, doctor authentication, protected-route rejection, case navigation, guided interview navigation, administrator authentication, and horizontal overflow.
-- Verified focusable form controls, semantic labels, usable tap targets, reduced-motion support, and readable wrapping at 390 px.
+### Fixes
 
-## Final findings
+- Converted the landing hero into a single isolated background frame with the supplied image covering the frame and a left-to-right readability gradient beneath the copy.
+- Added a semi-transparent, blurred safety panel over patient and clinician background images and refined the photographic overlay.
+- Added responsive gradient and crop rules so mobile copy remains readable without introducing overflow.
 
-- Typography: passed. Primary text is 16–20 px, page headings are 38–46 px on desktop, and supporting metadata no longer drops below practical reading size.
-- Layout and spacing: passed. Desktop grids remain balanced; mobile screens stack without horizontal overflow or collapsed-card overlap.
-- Colors and surfaces: passed. The landing page palette and soft clinical surface treatment are consistent across all reviewed routes.
-- Copy and content: passed. Patient-facing routes lead with reassurance, professional accompaniment, and treatment relevance; staff routes use actionable clinical language without exposing unnecessary provider details.
-- Icons and controls: passed. Existing icon-library assets remain aligned and consistent; primary controls and navigation paths work.
-- Accessibility: passed for the implemented scope. Labels, keyboard-reachable controls, contrast, tap targets, text wrapping, and reduced-motion behavior were reviewed.
-- Image quality: passed for the implemented scope. Existing generated/avatar imagery is preserved without stretching or low-resolution replacement.
+### Pass 2
+
+- Post-fix comparison evidence: the three `*-background-comparison.png` files listed above.
+- No actionable P0, P1, or P2 findings remain.
+
+## Follow-up polish
+
+- [P3] If a future iteration aims for tighter prototype fidelity, the landing hero can be shortened slightly and the copy size reduced at intermediate tablet widths.
 
 ## Final result
 

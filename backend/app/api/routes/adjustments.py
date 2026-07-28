@@ -28,7 +28,9 @@ from app.domain.enums import (
 from app.models.entities import (
     AdjustmentRequest,
     AvatarVersion,
+    PatientSession,
     SessionAvatarAuthorization,
+    SessionInvite,
 )
 from app.schemas.adjustments import (
     DoctorAdjustmentListResponse,
@@ -41,6 +43,7 @@ from app.schemas.adjustments import (
     SubmitAdjustmentResponse,
 )
 from app.schemas.avatars import AvatarVersionResponse
+from app.schemas.sessions import AdjustmentUsage
 from app.security.crypto import decrypt_sensitive_text, encrypt_sensitive_text
 from app.security.rate_limit import PATIENT_ADJUSTMENT_POLICY, enforce_rate_limit
 from app.services.adjustments import (
@@ -186,7 +189,7 @@ async def submit_adjustment(
         prior = await session.get(AdjustmentRequest, existing.resource_id)
         if prior is None:
             raise ApiError(409, "STATE_CONFLICT", "调整请求状态异常")
-        usage = await adjustment_usage(session, patient_session.case_id)
+        usage = await adjustment_usage(session, session_id)
         return SubmitAdjustmentResponse(
             **patient_adjustment_response(prior).model_dump(),
             used=usage.used,
@@ -232,13 +235,15 @@ async def submit_adjustment(
         patient_session.supervising_doctor_id,
         for_update=True,
     )
-    usage = await adjustment_usage(session, patient_session.case_id)
+    usage = await adjustment_usage(session, session_id)
     if usage.used >= ADJUSTMENT_LIMIT:
-        raise ApiError(409, "ADJUSTMENT_LIMIT_REACHED", "本病例的三次调整额度已用完")
+        raise ApiError(409, "ADJUSTMENT_LIMIT_REACHED", "本次会话的三次调整额度已用完")
     if usage.has_pending:
         raise ApiError(409, "STATE_CONFLICT", "已有调整请求等待医生处理")
 
     now = utc_now()
+    patient_session.patient_satisfied_version_id = None
+    patient_session.patient_satisfied_at = None
     request = AdjustmentRequest(
         case_id=patient_session.case_id,
         session_id=session_id,
@@ -286,7 +291,7 @@ async def list_patient_adjustments(
     patient_token: str | None = Header(default=None, alias="X-Session-Token"),
     session: AsyncSession = Depends(get_db_session),
 ) -> PatientAdjustmentListResponse:
-    patient_session = await authenticate_patient_session(session_id, patient_token, session)
+    await authenticate_patient_session(session_id, patient_token, session)
     requests = (
         await session.scalars(
             select(AdjustmentRequest)
@@ -294,7 +299,7 @@ async def list_patient_adjustments(
             .order_by(AdjustmentRequest.sequence_no)
         )
     ).all()
-    usage = await adjustment_usage(session, patient_session.case_id)
+    usage = await adjustment_usage(session, session_id)
     return PatientAdjustmentListResponse(
         items=[patient_adjustment_response(item) for item in requests],
         **usage.model_dump(),
@@ -318,7 +323,26 @@ async def list_doctor_adjustments(
             .order_by(AdjustmentRequest.sequence_no)
         )
     ).all()
-    usage = await adjustment_usage(session, case_id)
+    latest_invite_id = await session.scalar(
+        select(SessionInvite.invite_id)
+        .where(SessionInvite.case_id == case_id)
+        .order_by(SessionInvite.created_at.desc())
+        .limit(1)
+    )
+    latest_session_id = (
+        await session.scalar(
+            select(PatientSession.session_id).where(
+                PatientSession.invite_id == latest_invite_id
+            )
+        )
+        if latest_invite_id
+        else None
+    )
+    usage = (
+        await adjustment_usage(session, latest_session_id)
+        if latest_session_id
+        else AdjustmentUsage()
+    )
     return DoctorAdjustmentListResponse(
         items=[doctor_adjustment_response(item) for item in requests],
         controlled_options=CONTROLLED_ADJUSTMENT_OPTIONS,

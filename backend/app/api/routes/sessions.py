@@ -36,6 +36,7 @@ from app.models.entities import (
 from app.schemas.features import QUESTION_KEYS
 from app.schemas.sessions import (
     AdjustmentUsage,
+    PatientAvatarFeedbackRequest,
     SessionControlRequest,
     SessionResponse,
     StartSessionRequest,
@@ -64,6 +65,7 @@ def session_response(
     *,
     study_code: str | None = None,
     has_prior_assessment: bool = False,
+    current_authorized_version_id: UUID | None = None,
 ) -> SessionResponse:
     return SessionResponse(
         session_id=patient_session.session_id,
@@ -73,6 +75,9 @@ def session_response(
         stage=stage_for_status(patient_session.status, patient_session.assessment_mode),
         assessment_mode=patient_session.assessment_mode,
         has_prior_assessment=has_prior_assessment,
+        current_authorized_version_id=current_authorized_version_id,
+        patient_satisfied_version_id=patient_session.patient_satisfied_version_id,
+        patient_satisfied_at=patient_session.patient_satisfied_at,
         adjustments=AdjustmentUsage(),
         created_at=patient_session.created_at,
         started_at=patient_session.started_at,
@@ -105,9 +110,19 @@ async def build_session_response(
     *,
     study_code: str | None = None,
 ) -> SessionResponse:
+    current_authorized_version_id = await session.scalar(
+        select(SessionAvatarAuthorization.version_id)
+        .where(
+            SessionAvatarAuthorization.session_id == patient_session.session_id,
+            SessionAvatarAuthorization.status == AuthorizationStatus.AUTHORIZED,
+        )
+        .order_by(SessionAvatarAuthorization.authorized_at.desc())
+        .limit(1)
+    )
     return session_response(
         patient_session,
         study_code=study_code,
+        current_authorized_version_id=current_authorized_version_id,
         has_prior_assessment=await has_prior_complete_assessment(
             session, patient_session
         ),
@@ -146,8 +161,86 @@ async def get_session(
         return await build_session_response(
             session, patient_session, study_code=case.study_code if case else None
         )
-    patient_session = await authenticate_patient_session(session_id, patient_token, session)
+    patient_session = await authenticate_patient_session(
+        session_id,
+        patient_token,
+        session,
+        allow_ended=True,
+    )
     patient_session.last_seen_at = utc_now()
+    await session.commit()
+    return await build_session_response(session, patient_session)
+
+
+@router.post(
+    "/patient-sessions/{session_id}/avatar-feedback",
+    response_model=SessionResponse,
+)
+async def set_patient_avatar_feedback(
+    session_id: UUID,
+    payload: PatientAvatarFeedbackRequest,
+    patient_token: str | None = Header(default=None, alias="X-Session-Token"),
+    idempotency_key: str = Depends(require_idempotency_key),
+    session: AsyncSession = Depends(get_db_session),
+) -> SessionResponse:
+    patient_session = await authenticate_patient_session(
+        session_id, patient_token, session
+    )
+    if patient_session.status != SessionStatus.ACTIVE:
+        raise ApiError(409, "SESSION_INVALID", "只有进行中的会话可以提交图片反馈")
+
+    scope = f"patient-session:{session_id}"
+    request_payload = payload.model_dump(mode="json")
+    existing = await find_idempotency(
+        session,
+        actor_scope=scope,
+        operation="set_avatar_satisfaction",
+        key=idempotency_key,
+        payload=request_payload,
+    )
+    if existing:
+        return await build_session_response(session, patient_session)
+
+    authorization = await session.scalar(
+        select(SessionAvatarAuthorization).where(
+            SessionAvatarAuthorization.session_id == session_id,
+            SessionAvatarAuthorization.version_id == payload.version_id,
+            SessionAvatarAuthorization.status == AuthorizationStatus.AUTHORIZED,
+        )
+    )
+    if authorization is None:
+        raise ApiError(409, "AVATAR_NOT_AUTHORIZED", "当前图片版本尚未由医生授权")
+
+    now = utc_now()
+    if payload.satisfied:
+        patient_session.patient_satisfied_version_id = payload.version_id
+        patient_session.patient_satisfied_at = now
+    elif patient_session.patient_satisfied_version_id == payload.version_id:
+        patient_session.patient_satisfied_version_id = None
+        patient_session.patient_satisfied_at = None
+
+    add_audit(
+        session,
+        actor_type=AuditActorType.PATIENT,
+        case_id=patient_session.case_id,
+        invite_id=patient_session.invite_id,
+        session_id=session_id,
+        action=(
+            "avatar.patient_satisfaction_confirmed"
+            if payload.satisfied
+            else "avatar.patient_satisfaction_withdrawn"
+        ),
+        metadata={"version_id": str(payload.version_id)},
+    )
+    add_idempotency(
+        session,
+        actor_scope=scope,
+        operation="set_avatar_satisfaction",
+        key=idempotency_key,
+        payload=request_payload,
+        resource_id=session_id,
+        response_snapshot={"satisfied": payload.satisfied},
+    )
     await session.commit()
     return await build_session_response(session, patient_session)
 

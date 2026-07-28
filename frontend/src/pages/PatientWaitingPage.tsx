@@ -1,12 +1,15 @@
 import {
+  ArrowLeftOutlined,
+  CheckCircleOutlined,
   ExclamationCircleOutlined,
+  FormOutlined,
   LockOutlined,
   SafetyCertificateOutlined,
   SendOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Input, Modal, Progress, Spin, Tag } from 'antd'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Brand } from '../components/Brand'
@@ -15,6 +18,7 @@ import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
+  clearPatientSession,
   getPatientSessionToken,
   newIdempotencyKey,
   type AdjustmentStatus,
@@ -42,7 +46,7 @@ const sessionCopy: Record<PatientSession['status'], { eyebrow: string; title: st
   },
   ended: {
     eyebrow: '会话已结束',
-    title: '本次会话已经安全结束',
+    title: '会话已结束，感谢您的参与及配合！',
     copy: '谢谢你的参与。接下来可以继续和医生讨论感受；如需再次进入，医生会提供新的邀请码。',
   },
   expired: {
@@ -68,6 +72,7 @@ export function PatientWaitingPage() {
   const navigate = useNavigate()
   const { language, t } = useLanguage()
   const [pauseOpen, setPauseOpen] = useState(false)
+  const [endedNoticeOpen, setEndedNoticeOpen] = useState(false)
   const [session, setSession] = useState<PatientSession | null>(null)
   const [avatar, setAvatar] = useState<PatientAvatar | null>(null)
   const [adjustments, setAdjustments] = useState<PatientAdjustmentList | null>(null)
@@ -75,9 +80,16 @@ export function PatientWaitingPage() {
   const [loading, setLoading] = useState(true)
   const [pausing, setPausing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [feedbackMode, setFeedbackMode] = useState<'choice' | 'adjust' | 'satisfied'>(
+    'choice',
+  )
+  const endedNoticeShown = useRef(false)
+  const terminalSessionReached = useRef(false)
+  const sessionRefreshRunning = useRef(false)
 
   const patientToken = useCallback(() => {
     if (!sessionId) return null
@@ -121,6 +133,15 @@ export function PatientWaitingPage() {
       })
       setSession(result)
       setError(null)
+      if (result.status === 'ended' && !endedNoticeShown.current) {
+        terminalSessionReached.current = true
+        endedNoticeShown.current = true
+        setAvatar(null)
+        setAdjustments(null)
+        setPauseOpen(false)
+        setEndedNoticeOpen(true)
+      }
+      if (result.status === 'expired') terminalSessionReached.current = true
       if (result.status === 'active') await loadAuthorizedContent()
     } catch (requestError) {
       setError(
@@ -134,10 +155,105 @@ export function PatientWaitingPage() {
   }, [loadAuthorizedContent, navigate, patientToken, sessionId])
 
   useEffect(() => {
-    void loadSession()
-    const timer = window.setInterval(() => void loadSession(), 5000)
-    return () => window.clearInterval(timer)
+    const refreshVisibleSession = async () => {
+      if (
+        document.visibilityState !== 'visible' ||
+        sessionRefreshRunning.current ||
+        terminalSessionReached.current
+      ) return
+      sessionRefreshRunning.current = true
+      try {
+        await loadSession()
+      } finally {
+        sessionRefreshRunning.current = false
+      }
+    }
+    void refreshVisibleSession()
+    const timer = window.setInterval(() => void refreshVisibleSession(), 2000)
+    window.addEventListener('focus', refreshVisibleSession)
+    document.addEventListener('visibilitychange', refreshVisibleSession)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshVisibleSession)
+      document.removeEventListener('visibilitychange', refreshVisibleSession)
+    }
   }, [loadSession])
+
+  const feedbackStorageKey =
+    sessionId && avatar?.version_id
+      ? `patient-avatar-feedback:${sessionId}:${avatar.version_id}`
+      : null
+
+  useEffect(() => {
+    if (!feedbackStorageKey) return
+    if (adjustments?.has_pending) {
+      setFeedbackMode('adjust')
+      return
+    }
+    if (session?.patient_satisfied_version_id === avatar?.version_id) {
+      setFeedbackMode('satisfied')
+      window.sessionStorage.setItem(feedbackStorageKey, 'satisfied')
+      return
+    }
+    const savedMode = window.sessionStorage.getItem(feedbackStorageKey)
+    if (savedMode === 'satisfied') {
+      window.sessionStorage.removeItem(feedbackStorageKey)
+      setFeedbackMode('choice')
+      return
+    }
+    setFeedbackMode(
+      savedMode === 'adjust' ? savedMode : 'choice',
+    )
+  }, [
+    adjustments?.has_pending,
+    avatar?.version_id,
+    feedbackStorageKey,
+    session?.patient_satisfied_version_id,
+  ])
+
+  async function chooseFeedbackMode(mode: 'choice' | 'adjust' | 'satisfied') {
+    setAdjustmentError(null)
+    setSuccess(null)
+    const shouldSyncSatisfaction =
+      mode === 'satisfied' || feedbackMode === 'satisfied'
+    if (shouldSyncSatisfaction) {
+      const token = patientToken()
+      if (!sessionId || !token || !avatar?.version_id) return
+      setFeedbackSubmitting(true)
+      try {
+        const result = await apiRequest<PatientSession>(
+          `/patient-sessions/${sessionId}/avatar-feedback`,
+          {
+            method: 'POST',
+            patientToken: token,
+            idempotencyKey: newIdempotencyKey('patient-avatar-feedback'),
+            body: {
+              version_id: avatar.version_id,
+              satisfied: mode === 'satisfied',
+            },
+          },
+        )
+        setSession(result)
+      } catch (requestError) {
+        setAdjustmentError(
+          requestError instanceof ApiClientError
+            ? requestError.message
+            : t('满意状态暂时无法同步，请稍后重试'),
+        )
+        return
+      } finally {
+        setFeedbackSubmitting(false)
+      }
+    }
+
+    setFeedbackMode(mode)
+    if (!feedbackStorageKey) return
+    if (mode === 'choice') {
+      window.sessionStorage.removeItem(feedbackStorageKey)
+    } else {
+      window.sessionStorage.setItem(feedbackStorageKey, mode)
+    }
+  }
 
   async function pauseSession() {
     const token = patientToken()
@@ -158,6 +274,21 @@ export function PatientWaitingPage() {
     } finally {
       setPausing(false)
     }
+  }
+
+  function leaveEndedSession() {
+    setEndedNoticeOpen(false)
+    if (sessionId) {
+      clearPatientSession(sessionId)
+      const feedbackPrefix = `patient-avatar-feedback:${sessionId}:`
+      for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+        const key = window.sessionStorage.key(index)
+        if (key?.startsWith(feedbackPrefix)) {
+          window.sessionStorage.removeItem(key)
+        }
+      }
+    }
+    navigate('/patient/invite', { replace: true })
   }
 
   async function submitAdjustment() {
@@ -239,52 +370,123 @@ export function PatientWaitingPage() {
           </div>
 
           <aside className="patient-adjustment-panel">
-            <div className="patient-adjustment-panel__heading">
-              <div>
-                <span className="eyebrow">{t('告诉医生你的感受')}</span>
-                <h2>{t('这张图需要怎样调整？')}</h2>
+            {feedbackMode === 'choice' ? (
+              <div className="patient-feedback-choice">
+                <span className="eyebrow">{t('先告诉医生你的感受')}</span>
+                <h2>{t('这张图符合你的感受吗？')}</h2>
+                <p>
+                  {t('你可以选择满意并保持当前图像，或告诉医生哪些地方需要调整。')}
+                </p>
+                <div className="patient-feedback-choice__actions">
+                  <Button
+                    size="large"
+                    icon={<FormOutlined />}
+                    disabled={
+                      feedbackSubmitting
+                      || (adjustments?.used ?? 0) >= (adjustments?.limit ?? 3)
+                    }
+                    onClick={() => void chooseFeedbackMode('adjust')}
+                  >
+                    {t('调整')}
+                  </Button>
+                  <Button
+                    type="primary"
+                    size="large"
+                    icon={<CheckCircleOutlined />}
+                    loading={feedbackSubmitting}
+                    onClick={() => void chooseFeedbackMode('satisfied')}
+                  >
+                    {t('满意')}
+                  </Button>
+                </div>
+                {adjustmentError && (
+                  <Alert type="warning" showIcon message={adjustmentError} />
+                )}
+                {(adjustments?.used ?? 0) >= (adjustments?.limit ?? 3) && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={t('三次调整额度已使用完，仍可以选择满意并继续与医生讨论。')}
+                  />
+                )}
               </div>
-              <strong>{adjustments?.used ?? 0} / {adjustments?.limit ?? 3}</strong>
-            </div>
-            <Progress
-              percent={((adjustments?.used ?? 0) / (adjustments?.limit ?? 3)) * 100}
-              showInfo={false}
-              strokeColor="#5d7f78"
-              trailColor="#e8eeeb"
-            />
-            <p className="patient-adjustment-panel__hint">
-              {t('你可以提交最多 3 次调整建议。医生会先阅读并确认，再决定如何安全地调整图像。')}
-            </p>
-            <p className="patient-adjustment-panel__examples">
-              {t('你可以描述：年龄与性别呈现、脸型五官、肤色与皮肤、头发、表情眼神、服装、距离、光影、背景，或非人类与象征性特征。')}
-            </p>
-            <Input.TextArea
-              aria-label={t('外观调整建议')}
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              placeholder={t('例如：年龄更大、眼神更凶、脸型更瘦、头发更短、背景更暗')}
-              autoSize={{ minRows: 4, maxRows: 7 }}
-              maxLength={300}
-              showCount
-              disabled={Boolean(adjustments?.has_pending) || (adjustments?.used ?? 0) >= 3}
-            />
-            {adjustmentError && <Alert type="warning" showIcon message={adjustmentError} />}
-            {success && <Alert type="success" showIcon message={success} />}
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<SendOutlined />}
-              loading={submitting}
-              disabled={
-                instruction.trim().length < 2 ||
-                Boolean(adjustments?.has_pending) ||
-                (adjustments?.used ?? 0) >= 3
-              }
-              onClick={() => void submitAdjustment()}
-            >
-              {adjustments?.has_pending ? t('医生正在处理这条建议') : t('把建议告诉医生')}
-            </Button>
+            ) : feedbackMode === 'satisfied' ? (
+              <div className="patient-feedback-satisfied">
+                <CheckCircleOutlined />
+                <span className="eyebrow">{t('本次不需要调整')}</span>
+                <h2>{t('已选择满意')}</h2>
+                <p>
+                  {t('当前不会提交调整建议。如果改变想法，仍可以返回并告诉医生需要调整的地方。')}
+                </p>
+                <Button
+                  size="large"
+                  icon={<FormOutlined />}
+                  loading={feedbackSubmitting}
+                  disabled={(adjustments?.used ?? 0) >= (adjustments?.limit ?? 3)}
+                  onClick={() => void chooseFeedbackMode('adjust')}
+                >
+                  {t('改为调整')}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="patient-adjustment-panel__heading">
+                  <div>
+                    <span className="eyebrow">{t('告诉医生你的感受')}</span>
+                    <h2>{t('这张图需要怎样调整？')}</h2>
+                  </div>
+                  <strong>{adjustments?.used ?? 0} / {adjustments?.limit ?? 3}</strong>
+                </div>
+                <Progress
+                  percent={((adjustments?.used ?? 0) / (adjustments?.limit ?? 3)) * 100}
+                  showInfo={false}
+                  strokeColor="#5d7f78"
+                  trailColor="#e8eeeb"
+                />
+                <p className="patient-adjustment-panel__hint">
+                  {t('你可以提交最多 3 次调整建议。医生会先阅读并确认，再决定如何安全地调整图像。')}
+                </p>
+                <p className="patient-adjustment-panel__examples">
+                  {t('你可以描述：年龄与性别呈现、脸型五官、肤色与皮肤、头发、表情眼神、服装、距离、光影、背景，或非人类与象征性特征。')}
+                </p>
+                <Input.TextArea
+                  aria-label={t('外观调整建议')}
+                  value={instruction}
+                  onChange={(event) => setInstruction(event.target.value)}
+                  placeholder={t('例如：年龄更大、眼神更凶、脸型更瘦、头发更短、背景更暗')}
+                  autoSize={{ minRows: 4, maxRows: 7 }}
+                  maxLength={300}
+                  showCount
+                  disabled={Boolean(adjustments?.has_pending) || (adjustments?.used ?? 0) >= 3}
+                />
+                {adjustmentError && <Alert type="warning" showIcon message={adjustmentError} />}
+                {success && <Alert type="success" showIcon message={success} />}
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  icon={<SendOutlined />}
+                  loading={submitting}
+                  disabled={
+                    instruction.trim().length < 2 ||
+                    Boolean(adjustments?.has_pending) ||
+                    (adjustments?.used ?? 0) >= 3
+                  }
+                  onClick={() => void submitAdjustment()}
+                >
+                  {adjustments?.has_pending ? t('医生正在处理这条建议') : t('把建议告诉医生')}
+                </Button>
+                {!adjustments?.has_pending && (
+                  <Button
+                    className="patient-adjustment-back"
+                    icon={<ArrowLeftOutlined />}
+                    onClick={() => void chooseFeedbackMode('choice')}
+                  >
+                    {t('返回')}
+                  </Button>
+                )}
+              </>
+            )}
 
             {adjustments && adjustments.items.length > 0 && (
               <div className="patient-adjustment-history">
@@ -313,12 +515,21 @@ export function PatientWaitingPage() {
           </aside>
         </section>
       ) : (
-        <section className="waiting-panel">
-          <div className="waiting-visual" aria-hidden="true">
+        <section
+          className={`waiting-panel waiting-panel--${session?.status ?? 'waiting_doctor'}`}
+        >
+          <div
+            className={`waiting-visual waiting-visual--${session?.status ?? 'waiting_doctor'}`}
+            aria-hidden="true"
+          >
             <span className="waiting-ring waiting-ring--one" />
             <span className="waiting-ring waiting-ring--two" />
             <span className="waiting-ring waiting-ring--three" />
-            <i />
+            {session?.status === 'ended' ? (
+              <CheckCircleOutlined className="waiting-visual__state-icon" />
+            ) : (
+              <i />
+            )}
           </div>
           <span className="eyebrow">
             {t(
@@ -355,7 +566,13 @@ export function PatientWaitingPage() {
                 ? reusingPrevious
                   ? '医生正在准备上次的记录'
                   : '医生正在陪你完成访谈'
-                : '医生正在为你准备',
+                : session?.status === 'ended'
+                  ? '会话已结束'
+                  : session?.status === 'expired'
+                    ? '会话已过期'
+                    : session?.status === 'paused'
+                      ? '会话已暂停'
+                      : '医生正在为你准备',
             )}
           </div>
         </section>
@@ -383,6 +600,18 @@ export function PatientWaitingPage() {
         onOk={() => void pauseSession()}
       >
         <p>{t('暂停后页面内容会暂时隐藏，只有身边的医生可以恢复。请同时把你的感受告诉医生。')}</p>
+      </Modal>
+      <Modal
+        title={t('会话已结束')}
+        open={endedNoticeOpen}
+        okText={t('知道了')}
+        cancelButtonProps={{ style: { display: 'none' } }}
+        closable={false}
+        maskClosable={false}
+        onOk={leaveEndedSession}
+      >
+        <p>{t('会话已结束，感谢您的参与及配合！')}</p>
+        <p>{t('谢谢你的参与。接下来可以继续和医生讨论感受；如需再次进入，医生会提供新的邀请码。')}</p>
       </Modal>
     </main>
   )
