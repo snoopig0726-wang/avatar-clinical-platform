@@ -4,6 +4,10 @@ const caseId = 'ui-flow-case'
 const sessionId = 'ui-flow-session'
 const imageDataUrl =
   'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
+const ageControlledInstruction =
+  '适度增加人物年龄感，通过面部轮廓、发色与自然年龄特征呈现更年长的外观'
+const gazeControlledInstruction =
+  '根据患者描述调整眼睛颜色、大小、形状、眉形与凝视方向'
 
 type FlowState = 'complete' | 'current' | 'pending' | 'skipped'
 
@@ -198,17 +202,22 @@ function adjustmentList(scenario: Scenario) {
               scenario.adjustmentStatus === 'applied'
                 ? '2026-07-27T09:35:00Z'
                 : null,
-            controlled_instruction: 'Slightly reduce background brightness',
-            suggested_controlled_instruction:
-              'Slightly reduce background brightness',
-            controlled_options: ['Slightly reduce background brightness'],
+            controlled_instruction:
+              scenario.adjustmentStatus === 'applied'
+                ? ageControlledInstruction
+                : null,
+            suggested_controlled_instruction: ageControlledInstruction,
+            controlled_options: [
+              ageControlledInstruction,
+              gazeControlledInstruction,
+            ],
           },
         ]
       : [],
     used: hasAdjustment ? 1 : 0,
     limit: 3,
     has_pending: scenario.adjustmentStatus === 'pending_doctor_review',
-    controlled_options: ['Slightly reduce background brightness'],
+    controlled_options: [ageControlledInstruction, gazeControlledInstruction],
   }
 }
 
@@ -380,4 +389,33 @@ test('expanded case workflow remains readable on mobile', async ({
     path: '../tmp/ui-qa/case-flow-mobile.png',
     fullPage: true,
   })
+})
+
+test('controlled instructions follow the selected interface language', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+  const scenario = scenarios[1]
+  await mockScenario(page, scenario)
+  await page.goto(`/doctor/cases/${caseId}`)
+
+  await expect(
+    page.getByText(
+      'Moderately increase apparent age through facial contours, hair color, and natural age features',
+    ),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clinician adjustment' }).click()
+  await expect(
+    page.getByRole('radio', {
+      name: 'Adjust eye color, size, shape, eyebrow shape, and gaze direction',
+    }),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: '简体中文' }).click()
+  await page.getByRole('button', { name: '医生调整' }).click()
+  await expect(
+    page.getByRole('radio', { name: gazeControlledInstruction }),
+  ).toBeVisible()
 })

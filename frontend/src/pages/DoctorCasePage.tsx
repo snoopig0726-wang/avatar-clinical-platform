@@ -37,6 +37,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 
 import { Brand } from '../components/Brand'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
+import { localizeControlledInstruction } from '../i18n/controlledInstructions'
 import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
@@ -1344,12 +1345,22 @@ export function DoctorCasePage() {
                       <blockquote>{item.instruction}</blockquote>
                       {item.controlled_instruction && (
                         <div className="controlled-instruction">
-                          <SafetyCertificateOutlined /> {t('受控指令：')}{item.controlled_instruction}
+                          <SafetyCertificateOutlined /> {t('受控指令：')}
+                          {localizeControlledInstruction(
+                            item.controlled_instruction,
+                            t,
+                            language,
+                          )}
                         </div>
                       )}
                       {item.status === 'pending_doctor_review' && (
                         <div className="controlled-instruction controlled-instruction--suggested">
-                          <SafetyCertificateOutlined /> {t('系统建议受控指令：')}{item.suggested_controlled_instruction}
+                          <SafetyCertificateOutlined /> {t('系统建议受控指令：')}
+                          {localizeControlledInstruction(
+                            item.suggested_controlled_instruction,
+                            t,
+                            language,
+                          )}
                         </div>
                       )}
                       {item.status === 'rejected' && item.rejection_reason && (
@@ -1510,7 +1521,7 @@ export function DoctorCasePage() {
         >
           {adjustTarget?.controlled_options.map((option) => (
             <Radio key={option} value={option}>
-              {option}
+              {localizeControlledInstruction(option, t, language)}
             </Radio>
           ))}
         </Radio.Group>

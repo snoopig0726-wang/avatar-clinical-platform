@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.enums import RiskRuleType
 from app.models.entities import RiskRule
 from app.services.core import utc_now
+from app.services.text_normalization import normalize_multilingual_text
 
 RISK_RULE_VERSION = "RISK-V1.0"
 
@@ -244,6 +244,64 @@ PII_PATTERNS = (
     re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE),
 )
 
+ENGLISH_RISK_MARKERS: tuple[tuple[str, str], ...] = (
+    (
+        r"\b(?:blood|bloody|gore|gory|bleeding|open wound|self[- ]?harm|"
+        r"self[- ]?injury|cut (?:my|their|his|her) wrists?|suicid(?:e|al))\b",
+        "流血自残",
+    ),
+    (
+        r"\b(?:knife|dagger|machete|gun|pistol|rifle|bullet|bomb|explosive|"
+        r"molotov|bat|axe|chainsaw|crossbow|poison|acid|noose)\b",
+        "刀",
+    ),
+    (
+        r"\b(?:attack|harm|hurt|threaten|wield|aim|use|using|generate|create|"
+        r"show|depict|add|include)\b",
+        "生成",
+    ),
+    (r"\b(?:no|not|without|avoid|exclude|do not|don't|never)\b", "不要"),
+    (
+        r"\b(?:horror|horrific|terrifying|demon|ghost|zombie|monster|hell|"
+        r"curse|skull|faceless)\b",
+        "恐怖",
+    ),
+    (r"\b(?:image|appearance|scene|visual|turn (?:him|her|them|it) into)\b", "形象"),
+    (
+        r"\b(?:threat|threaten|attack|assault|choke|stab|shoot|kill|murder|"
+        r"violent rage|aggressive pose)\b",
+        "威胁",
+    ),
+    (
+        r"\b(?:real patient|patient photo|patient portrait|medical photo|"
+        r"celebrity face|politician face|face swap|real person portrait)\b",
+        "真实患者肖像",
+    ),
+    (r"\b(?:race|racial|ethnicity|ethnic group)\b", "人种"),
+    (
+        r"\b(?:inferior|dirty race|subhuman|racial cleansing|racial insult|"
+        r"racial hatred)\b",
+        "歧视",
+    ),
+    (
+        r"\b(?:child|kid|minor)\b.*\b(?:hurt|injur(?:e|ed|y)|bleed|self[- ]?harm|"
+        r"suicid(?:e|al)|abuse|corpse)\b",
+        "儿童受伤",
+    ),
+    (
+        r"\b(?:being monitored|being followed|being listened to|mind control|"
+        r"secret organization|chosen one|divine message|possessed|hidden message|"
+        r"alien control)\b",
+        "被监控",
+    ),
+    (r"\b(?:confirm|prove|real|really|indeed|definitely true)\b", "确认"),
+    (
+        r"\b(?:phone number|identity card|id number|email address|home address|"
+        r"full name|contact details|medical record number|social media handle)\b",
+        "姓名",
+    ),
+)
+
 
 class RiskServiceUnavailable(RuntimeError):
     pass
@@ -265,8 +323,11 @@ class RiskDecision:
 
 
 def normalize_for_risk(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text).lower()
-    return re.sub(r"\s+", "", normalized)
+    normalized = normalize_multilingual_text(text)
+    markers = "".join(
+        marker for pattern, marker in ENGLISH_RISK_MARKERS if re.search(pattern, normalized)
+    )
+    return re.sub(r"\s+", "", f"{normalized}{markers}")
 
 
 async def seed_default_risk_rules(session: AsyncSession) -> None:

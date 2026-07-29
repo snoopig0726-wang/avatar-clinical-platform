@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.enums import AdjustmentStatus
 from app.models.entities import AdjustmentRequest
 from app.schemas.sessions import AdjustmentUsage
+from app.services.text_normalization import normalize_multilingual_text
 
 ADJUSTMENT_LIMIT = 3
 PENDING_ADJUSTMENT_STATUSES = {
@@ -46,14 +48,133 @@ CONTROLLED_ADJUSTMENT_OPTIONS = [
     "根据患者描述调整背景场景、色彩与氛围，同时保持主体清晰可辨",
 ]
 
+ENGLISH_CONTROLLED_GROUPS: tuple[tuple[tuple[str, ...], int], ...] = (
+    ((r"\b(?:old|older|aged|more mature|age(?:d)? up|increase(?: the)? age)\b",), 1),
+    ((r"\b(?:young|younger|more youthful|youthful|decrease(?: the)? age)\b",), 2),
+    ((r"\b(?:scarier|more frightening|more terrifying|creepier|more unsettling)\b",), 3),
+    ((r"\b(?:less scary|less frightening|less terrifying|not scary)\b",), 4),
+    ((r"\b(?:calm|calmer|relaxed|more relaxed|softer expression|less tense)\b",), 0),
+    (
+        (
+            r"\b(?:less shadow|fewer shadows|bright|brighter|light|lighter|"
+            r"lower contrast|soft lighting)\b",
+        ),
+        5,
+    ),
+    ((r"\b(?:more shadow|more shadows|dark|darker|dim|dimmer|higher contrast)\b",), 6),
+    ((r"\b(?:softer gaze|relaxed gaze|less intense gaze)\b",), 7),
+    ((r"\b(?:plain background|simple background|light background|solid background)\b",), 8),
+    (
+        (
+            r"\b(?:farther|further away|closer|zoom in|zoom out|larger|smaller|"
+            r"composition|framing)\b",
+        ),
+        9,
+    ),
+    ((r"\b(?:male|female|masculine|feminine|androgynous|gender)\b",), 10),
+    (
+        (
+            r"\b(?:ethnicity|ethnic|race|racial|east asian|south asian|asian|"
+            r"african|black|white|european)\b",
+        ),
+        11,
+    ),
+    (
+        (
+            r"\b(?:face|face shape|rounder face|longer face|jaw|jawline|chin|"
+            r"cheekbone|cheekbones|nose|mouth|lip|lips|ear|ears)\b",
+        ),
+        12,
+    ),
+    (
+        (
+            r"\b(?:skin|complexion|pale|flushed|smooth|rough|wrinkle|wrinkles|"
+            r"freckle|freckles|scar|scars)\b",
+        ),
+        13,
+    ),
+    (
+        (
+            r"\b(?:hair|hairstyle|hairline|blond|blonde|brunette|gray hair|"
+            r"grey hair|long hair|longer hair|hair longer|short hair|shorter hair|"
+            r"hair shorter|curly hair|straight hair|bald|"
+            r"beard|moustache|mustache)\b",
+        ),
+        14,
+    ),
+    ((r"\b(?:eye|eyes|eyebrow|eyebrows|gaze|stare|looking)\b",), 15),
+    (
+        (
+            r"(?<!less )(?<!not )\b(?:angry|angrier|fiercer|fierce|stern|"
+            r"stricter|colder|mocking|contemptuous|menacing)\b",
+        ),
+        16,
+    ),
+    (
+        (
+            r"\b(?:less angry|less fierce|less stern|less menacing|not angry|"
+            r"not fierce|not menacing)\b",
+        ),
+        17,
+    ),
+    (
+        (
+            r"\b(?:sad|sadder|tired|fatigued|exhausted|weary|in pain|painful|"
+            r"crying|tearful)\b",
+        ),
+        18,
+    ),
+    ((r"\b(?:smile|smiling|friendlier|friendly|kind|kinder|gentle|warmer)\b",), 19),
+    (
+        (
+            r"(?<!less )\b(?:more powerful|stronger|authoritative|dominant|"
+            r"more dominant|oppressive|intimidating)\b",
+        ),
+        20,
+    ),
+    (
+        (
+            r"\b(?:weaker|less dominant|less oppressive|less intimidating|equal|"
+            r"approachable|closer to me)\b",
+        ),
+        21,
+    ),
+    (
+        (
+            r"\b(?:nonhuman|non-human|monster|demon|ghost|robot|animal|faceless|"
+            r"supernatural|symbolic)\b",
+        ),
+        22,
+    ),
+    ((r"\b(?:realistic|photorealistic|cartoon|illustration|silhouette|abstract)\b",), 23),
+    (
+        (
+            r"\b(?:clothes|clothing|outfit|hat|glasses|mask|jewelry|jewellery|"
+            r"uniform|robe)\b",
+        ),
+        24,
+    ),
+    (
+        (
+            r"\b(?:background|scene|indoors|outdoors|room|street|color palette|"
+            r"colour palette|atmosphere)\b",
+        ),
+        25,
+    ),
+)
+
 
 def build_controlled_options(raw_instruction: str) -> list[str]:
     raw = raw_instruction.strip()
+    normalized = normalize_multilingual_text(raw)
     matched: list[str] = []
 
     directional_groups = (
-        (("更老", "再老", "老一点", "年长", "年龄大"), CONTROLLED_ADJUSTMENT_OPTIONS[1]),
-        (("更年轻", "年轻一点", "年龄小"), CONTROLLED_ADJUSTMENT_OPTIONS[2]),
+        (
+            ("更老", "再老", "老一点", "年长", "年龄大", "年龄更大"),
+            CONTROLLED_ADJUSTMENT_OPTIONS[1],
+        ),
+        (("更年轻", "年轻一点", "年龄小", "年龄更小"), CONTROLLED_ADJUSTMENT_OPTIONS[2]),
         (
             (
                 "更可怕",
@@ -139,6 +260,7 @@ def build_controlled_options(raw_instruction: str) -> list[str]:
                 "眼睛形状",
                 "眉毛",
                 "眉形",
+                "眼神",
                 "凝视",
                 "视线",
             ),
@@ -210,7 +332,15 @@ def build_controlled_options(raw_instruction: str) -> list[str]:
         ),
     )
     for phrases, controlled in directional_groups:
-        if any(phrase in raw for phrase in phrases) and controlled not in matched:
+        if any(phrase in normalized for phrase in phrases) and controlled not in matched:
+            matched.append(controlled)
+
+    for patterns, option_index in ENGLISH_CONTROLLED_GROUPS:
+        controlled = CONTROLLED_ADJUSTMENT_OPTIONS[option_index]
+        if (
+            any(re.search(pattern, normalized) for pattern in patterns)
+            and controlled not in matched
+        ):
             matched.append(controlled)
 
     if not matched:

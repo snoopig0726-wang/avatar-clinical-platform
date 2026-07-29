@@ -13,7 +13,11 @@ from app.domain.enums import ApprovalStatus, Role
 from app.main import app
 from app.models import AdjustmentRequest, AuditLog, Base, ClinicalCase, PatientSession, StaffUser
 from app.security.crypto import derive_patient_token, hash_password
-from app.services.adjustments import build_controlled_instruction, build_controlled_options
+from app.services.adjustments import (
+    CONTROLLED_ADJUSTMENT_OPTIONS,
+    build_controlled_instruction,
+    build_controlled_options,
+)
 from app.services.example_data import seed_example_data
 from app.services.risk_engine import evaluate_adjustment_text, seed_default_risk_rules
 
@@ -25,6 +29,63 @@ def test_controlled_instruction_preserves_patient_direction() -> None:
     assert "令人不安" in controlled
     assert "柔化面部" not in controlled
     assert controlled == build_controlled_options("再老一点，可怕一点。")[0]
+
+
+def test_controlled_instruction_supports_english_and_traditional_chinese() -> None:
+    english_options = build_controlled_options("older, with a fiercer gaze and shorter hair")
+
+    assert any("年龄感" in option for option in english_options)
+    assert any("凝视方向" in option for option in english_options)
+    assert any("愤怒、严厉" in option for option in english_options)
+    assert any("发色、长短" in option for option in english_options)
+    assert all("older" not in option for option in english_options)
+
+    traditional_options = build_controlled_options("年齡更大、眼神更兇、頭髮更短")
+
+    assert any("年龄感" in option for option in traditional_options)
+    assert any("凝视方向" in option for option in traditional_options)
+    assert any("愤怒、严厉" in option for option in traditional_options)
+    assert any("发色、长短" in option for option in traditional_options)
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected_option_index"),
+    [
+        ("make the expression calmer", 0),
+        ("make the person look older", 1),
+        ("make the person look younger", 2),
+        ("make the image scarier", 3),
+        ("make it less scary", 4),
+        ("use brighter soft lighting", 5),
+        ("make the background darker", 6),
+        ("use a softer gaze", 7),
+        ("use a plain background", 8),
+        ("zoom out and change the framing", 9),
+        ("make the face more masculine", 10),
+        ("use an East Asian appearance", 11),
+        ("make the jawline sharper", 12),
+        ("add more wrinkles to the skin", 13),
+        ("make the hair shorter", 14),
+        ("change the eye color", 15),
+        ("give the person a fiercer expression", 16),
+        ("make the expression less fierce", 17),
+        ("make the face look exhausted", 18),
+        ("make the person friendlier", 19),
+        ("make the person more authoritative", 20),
+        ("make the figure more approachable", 21),
+        ("make the figure non-human", 22),
+        ("use an illustration style", 23),
+        ("change the outfit", 24),
+        ("change the room background", 25),
+    ],
+)
+def test_each_controlled_category_has_an_english_path(
+    instruction: str,
+    expected_option_index: int,
+) -> None:
+    options = build_controlled_options(instruction)
+
+    assert CONTROLLED_ADJUSTMENT_OPTIONS[expected_option_index] in options
 
 
 @pytest.mark.asyncio
@@ -43,6 +104,16 @@ async def test_risk_matching_semantics(tmp_path) -> None:
         assert pii.allowed is False
         assert pii.patient_message_type == "identity"
         assert (await evaluate_adjustment_text(session, "希望背景更明亮柔和")).allowed is True
+        assert (await evaluate_adjustment_text(session, "show a bleeding wound")).allowed is False
+        assert (await evaluate_adjustment_text(session, "generate a knife")).allowed is False
+        assert (await evaluate_adjustment_text(session, "do not generate a knife")).allowed is True
+        assert (await evaluate_adjustment_text(session, "生成流血傷口")).allowed is False
+        assert (
+            await evaluate_adjustment_text(
+                session,
+                "make the background darker and the gaze fiercer",
+            )
+        ).allowed is True
     await engine.dispose()
 
 
