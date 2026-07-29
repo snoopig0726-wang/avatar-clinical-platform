@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.dependencies import get_db_session
-from app.domain.enums import ApprovalStatus, Role
+from app.domain.enums import (
+    ApprovalStatus,
+    GenerationMode,
+    GenerationStatus,
+    Role,
+)
 from app.main import app
-from app.models import Base, StaffUser
+from app.models import AvatarVersion, Base, StaffUser
 from app.security.crypto import hash_password
 
 
@@ -196,6 +202,54 @@ async def test_doctor_case_invite_and_supervised_session_flow(tmp_path) -> None:
                 f"/api/cases/{case_id}/visual-features", headers=doctor_headers
             )
             assert still_confirmed.json()["is_doctor_confirmed"] is True
+
+            async with session_factory() as session:
+                generated_version = AvatarVersion(
+                    case_id=UUID(case_id),
+                    source_visual_feature_id=UUID(
+                        confirmed.json()["visual_feature_id"]
+                    ),
+                    voice_features_snapshot_json=answers,
+                    visual_features_snapshot_json=effective,
+                    generation_round=1,
+                    generation_mode=GenerationMode.INITIAL,
+                    generation_status=GenerationStatus.QUEUED,
+                    image_object_key=None,
+                    provider_kind="mock",
+                    provider_model="mock-avatar-v1",
+                    prompt_template_version="test",
+                    prompt_sha256=b"test-prompt",
+                    safety_status="pending",
+                    doctor_review_status="pending",
+                    is_current_candidate=True,
+                    created_at=datetime.now(UTC),
+                )
+                session.add(generated_version)
+                await session.commit()
+                generated_version_id = generated_version.version_id
+
+            patient_generation_stage = await client.get(
+                f"/api/sessions/{session_id}",
+                headers=patient_headers,
+            )
+            assert patient_generation_stage.json()["stage"] == "image_generation"
+
+            async with session_factory() as session:
+                generated_version = await session.get(
+                    AvatarVersion,
+                    generated_version_id,
+                )
+                assert generated_version is not None
+                generated_version.generation_status = (
+                    GenerationStatus.PENDING_DOCTOR_REVIEW
+                )
+                await session.commit()
+
+            patient_review_stage = await client.get(
+                f"/api/sessions/{session_id}",
+                headers=patient_headers,
+            )
+            assert patient_review_stage.json()["stage"] == "image_review"
 
             paused = await client.post(
                 f"/api/patient-sessions/{session_id}/pause",

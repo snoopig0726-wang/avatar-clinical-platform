@@ -3,6 +3,7 @@ import {
   ArrowRightOutlined,
   CheckCircleFilled,
   ExperimentOutlined,
+  PictureOutlined,
   SaveOutlined,
   SafetyCertificateOutlined,
   SoundOutlined,
@@ -35,6 +36,8 @@ import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
+  type AvatarVersion,
+  type AvatarVersionList,
   type CaseSafetyEventListResponse,
   newIdempotencyKey,
   type PatientSession,
@@ -96,8 +99,10 @@ export function DoctorInterviewPage() {
   const [contract, setContract] = useState<VoiceFeatureContract | null>(null)
   const [voice, setVoice] = useState<VoiceFeatures | null>(null)
   const [visual, setVisual] = useState<VisualFeatures | null>(null)
+  const [avatarVersions, setAvatarVersions] = useState<AvatarVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [questionIndex, setQuestionIndex] = useState(0)
   const [restoreSystem, setRestoreSystem] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -112,12 +117,16 @@ export function DoctorInterviewPage() {
       return
     }
     try {
-      const [contractResult, voiceResult] = await Promise.all([
+      const [contractResult, voiceResult, versionResult] = await Promise.all([
         apiRequest<VoiceFeatureContract>('/meta/voice-feature-contract'),
         apiRequest<VoiceFeatures>(`/sessions/${sessionId}/voice-features`, { staffToken: token }),
+        apiRequest<AvatarVersionList>(`/cases/${caseId}/avatar-versions`, {
+          staffToken: token,
+        }),
       ])
       setContract(contractResult)
       setVoice(voiceResult)
+      setAvatarVersions(versionResult.items)
       voiceForm.setFieldsValue(voiceResult.answers)
       setQuestionIndex(0)
       try {
@@ -368,6 +377,34 @@ export function DoctorInterviewPage() {
     }
   }
 
+  async function generateInitialAvatar() {
+    const token = staffTokenStore.get()
+    if (
+      !token
+      || !caseId
+      || !visual?.is_doctor_confirmed
+      || avatarVersions.length > 0
+      || generating
+    ) return
+    setGenerating(true)
+    try {
+      const result = await apiRequest<AvatarVersion>(`/cases/${caseId}/avatar-generations`, {
+        method: 'POST',
+        staffToken: token,
+        idempotencyKey: newIdempotencyKey('interview-avatar-generate'),
+        body: { mode: 'initial' },
+      })
+      setAvatarVersions([result])
+      messageApi.success(t('生图任务已提交，完成后需要医生审核才会展示给患者'))
+    } catch (requestError) {
+      messageApi.error(
+        requestError instanceof Error ? requestError.message : t('生图任务提交失败'),
+      )
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   if (loading) return <div className="route-fallback"><Spin size="large" tip={t('正在恢复访谈草稿…')} /></div>
 
   const currentQuestionKey = contract?.question_order[questionIndex]
@@ -468,11 +505,55 @@ export function DoctorInterviewPage() {
                 })}
               </Row>
             </Form>
-            <Space className="visual-actions"><Button onClick={() => { visualForm.setFieldsValue(visual.system_result); setRestoreSystem(true) }}>{t('恢复系统结果')}</Button><Button type="primary" icon={<CheckCircleFilled />} loading={saving} onClick={() => void confirmVisualFeatures()}>{t('确认视觉特征')}</Button></Space>
+            <Space className="visual-actions" wrap>
+              <Button onClick={() => { visualForm.setFieldsValue(visual.system_result); setRestoreSystem(true) }}>
+                {t('恢复系统结果')}
+              </Button>
+              <Button
+                type={visual.is_doctor_confirmed ? 'default' : 'primary'}
+                icon={<CheckCircleFilled />}
+                loading={saving}
+                onClick={() => void confirmVisualFeatures()}
+              >
+                {t('确认视觉特征')}
+              </Button>
+              {visual.is_doctor_confirmed && (
+                avatarVersions.length === 0 ? (
+                  <Button
+                    type="primary"
+                    icon={<PictureOutlined />}
+                    loading={generating}
+                    onClick={() => void generateInitialAvatar()}
+                  >
+                    {t(generating ? '正在生成图片' : '直接生成图片')}
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    icon={<PictureOutlined />}
+                    onClick={() => navigate(`/doctor/cases/${caseId}`)}
+                  >
+                    {t('查看图片进度')}
+                  </Button>
+                )
+              )}
+            </Space>
           </Card>
         )}
 
-        {visual?.is_doctor_confirmed && <Alert className="interview-complete" type="success" showIcon message={t('访谈记录与视觉方向已确认')} description={t('现在可以返回病例页面，为患者生成第一版视觉表达；后续也可根据患者反馈继续调整。')} />}
+        {visual?.is_doctor_confirmed && (
+          <Alert
+            className="interview-complete"
+            type="success"
+            showIcon
+            message={t('访谈记录与视觉方向已确认')}
+            description={t(
+              avatarVersions.length > 0
+                ? '图片生成任务已提交。可返回病例页面查看生成进度，完成后进行审核。'
+                : '现在可以在本页直接生成第一版视觉表达；后续也可根据患者反馈继续调整。',
+            )}
+          />
+        )}
       </main>
     </div>
   )

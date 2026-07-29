@@ -1277,8 +1277,19 @@ a {
 }
 
 .waiting-visual--waiting_doctor i,
-.waiting-visual--active i {
+.waiting-visual--active i,
+.waiting-visual--image_generation i,
+.waiting-visual--image_review i {
   animation: waiting-core 1.2s ease-in-out infinite;
+}
+
+.waiting-visual--image_generation .waiting-ring {
+  border-color: rgba(46, 126, 105, 0.56);
+  animation-duration: 1.8s;
+}
+
+.waiting-visual--image_review .waiting-ring {
+  animation-duration: 2.8s;
 }
 
 @keyframes waiting-core {
@@ -1368,6 +1379,71 @@ a {
   background: #5da887;
   box-shadow: 0 0 0 4px rgba(93, 168, 135, 0.14);
   animation: waiting-status-pulse 1.4s ease-in-out infinite;
+}
+
+.patient-generation-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(660px, 100%);
+  margin: 0 0 28px;
+  padding: 18px;
+  border: 1px solid #d4e1dc;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.patient-generation-progress__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 16px;
+  color: #81918b;
+  text-align: left;
+}
+
+.patient-generation-progress__item + .patient-generation-progress__item {
+  border-left: 1px solid #dbe5e1;
+}
+
+.patient-generation-progress__item > i,
+.patient-generation-progress__item > .anticon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #c5d3ce;
+  border-radius: 50%;
+  color: #74877f;
+  font-style: normal;
+}
+
+.patient-generation-progress__item.is-complete,
+.patient-generation-progress__item.is-current {
+  color: var(--patient-text);
+}
+
+.patient-generation-progress__item.is-complete > .anticon {
+  border-color: #69a18d;
+  color: #2f7e69;
+  background: #e8f2ee;
+}
+
+.patient-generation-progress__item.is-current > i {
+  border-color: #2f7e69;
+  color: #fff;
+  background: #2f7e69;
+  box-shadow: 0 0 0 6px rgba(47, 126, 105, 0.12);
+  animation: waiting-status-pulse 1.4s ease-in-out infinite;
+}
+
+.patient-generation-progress__item span {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 @keyframes waiting-status-pulse {
@@ -3187,6 +3263,21 @@ a {
 }
 
 @media (max-width: 680px) {
+  .patient-generation-progress {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 12px 16px;
+  }
+
+  .patient-generation-progress__item {
+    padding: 12px 4px;
+  }
+
+  .patient-generation-progress__item + .patient-generation-progress__item {
+    border-top: 1px solid #dbe5e1;
+    border-left: 0;
+  }
+
   .language-switcher {
     flex: 0 0 auto;
   }

@@ -32,6 +32,7 @@ from app.models.entities import (
     SessionAvatarAuthorization,
     SessionInvite,
     SoundDescription,
+    VisualFeature,
 )
 from app.schemas.features import QUESTION_KEYS
 from app.schemas.sessions import (
@@ -66,13 +67,15 @@ def session_response(
     study_code: str | None = None,
     has_prior_assessment: bool = False,
     current_authorized_version_id: UUID | None = None,
+    stage: str | None = None,
 ) -> SessionResponse:
     return SessionResponse(
         session_id=patient_session.session_id,
         case_id=patient_session.case_id,
         study_code=study_code,
         status=patient_session.status,
-        stage=stage_for_status(patient_session.status, patient_session.assessment_mode),
+        stage=stage
+        or stage_for_status(patient_session.status, patient_session.assessment_mode),
         assessment_mode=patient_session.assessment_mode,
         has_prior_assessment=has_prior_assessment,
         current_authorized_version_id=current_authorized_version_id,
@@ -119,6 +122,42 @@ async def build_session_response(
         .order_by(SessionAvatarAuthorization.authorized_at.desc())
         .limit(1)
     )
+    stage = stage_for_status(
+        patient_session.status,
+        patient_session.assessment_mode,
+    )
+    if (
+        patient_session.status == SessionStatus.ACTIVE
+        and current_authorized_version_id is None
+        and patient_session.assessment_mode == "new_assessment"
+    ):
+        latest_generation_status = await session.scalar(
+            select(AvatarVersion.generation_status)
+            .join(
+                VisualFeature,
+                AvatarVersion.source_visual_feature_id
+                == VisualFeature.visual_feature_id,
+            )
+            .join(
+                SoundDescription,
+                VisualFeature.source_sound_description_id
+                == SoundDescription.sound_description_id,
+            )
+            .where(
+                AvatarVersion.case_id == patient_session.case_id,
+                SoundDescription.session_id == patient_session.session_id,
+            )
+            .order_by(AvatarVersion.generation_round.desc())
+            .limit(1)
+        )
+        if latest_generation_status in {
+            GenerationStatus.QUEUED,
+            GenerationStatus.GENERATING,
+            GenerationStatus.CHECKING,
+        }:
+            stage = "image_generation"
+        elif latest_generation_status is not None:
+            stage = "image_review"
     return session_response(
         patient_session,
         study_code=study_code,
@@ -126,6 +165,7 @@ async def build_session_response(
         has_prior_assessment=await has_prior_complete_assessment(
             session, patient_session
         ),
+        stage=stage,
     )
 
 

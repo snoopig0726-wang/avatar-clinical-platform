@@ -331,6 +331,55 @@ export function PatientWaitingPage() {
   const activeAuthorized = session?.status === 'active' && avatar
   const reusingPrevious =
     session?.status === 'active' && session.assessment_mode === 'reuse_previous'
+  const imageGenerating =
+    session?.status === 'active' && session.stage === 'image_generation'
+  const imageReviewing =
+    session?.status === 'active' && session.stage === 'image_review'
+  const imagePreparation = imageGenerating || imageReviewing
+  const waitingCopy = imageGenerating
+    ? {
+        eyebrow: '正在生成视觉表达',
+        title: '图片正在生成，请稍等',
+        copy: '医生已经完成访谈记录，系统正在生成图片并进行安全检查。这通常需要一点时间，请留在当前页面，完成后会自动更新。',
+        status: '正在生成并进行安全检查',
+      }
+    : imageReviewing
+      ? {
+          eyebrow: '图片已经生成',
+          title: '医生正在进行最后确认',
+          copy: '图片已经准备完成，医生正在进行安全确认和审核。确认适合展示后，这里会自动出现图片。',
+          status: '医生正在审核图片',
+        }
+      : session?.status === 'active'
+        ? reusingPrevious
+          ? {
+              eyebrow: '沿用上次记录',
+              title: '医生正在调取上次的记录',
+              copy: '你不需要再次回答 Q1–Q8。请稍候，医生会和你一起继续查看上次的视觉表达；如果这次感受有变化，也可以直接告诉医生。',
+              status: '医生正在准备上次的记录',
+            }
+          : {
+              eyebrow: '访谈已经开始',
+              title: '请根据医生的提问，回答问题',
+              copy: '请放松，不需要担心回答得是否正确。请按照医生的提问，根据自己的真实感受回答；如果感到不舒服，可以随时告诉医生并暂停。',
+              status: '医生正在陪你完成访谈',
+            }
+        : {
+            eyebrow: copy.eyebrow,
+            title: copy.title,
+            copy: copy.copy,
+            status:
+              session?.status === 'ended'
+                ? '会话已结束'
+                : session?.status === 'expired'
+                  ? '会话已过期'
+                  : session?.status === 'paused'
+                    ? '会话已暂停'
+                    : '医生正在为你准备',
+          }
+  const waitingPhase = imagePreparation
+    ? session.stage
+    : session?.status ?? 'waiting_doctor'
 
   return (
     <main className="patient-session-page">
@@ -516,10 +565,10 @@ export function PatientWaitingPage() {
         </section>
       ) : (
         <section
-          className={`waiting-panel waiting-panel--${session?.status ?? 'waiting_doctor'}`}
+          className={`waiting-panel waiting-panel--${waitingPhase}`}
         >
           <div
-            className={`waiting-visual waiting-visual--${session?.status ?? 'waiting_doctor'}`}
+            className={`waiting-visual waiting-visual--${waitingPhase}`}
             aria-hidden="true"
           >
             <span className="waiting-ring waiting-ring--one" />
@@ -531,49 +580,39 @@ export function PatientWaitingPage() {
               <i />
             )}
           </div>
-          <span className="eyebrow">
-            {t(
-              session?.status === 'active'
-                ? reusingPrevious
-                  ? '沿用上次记录'
-                  : '访谈已经开始'
-                : copy.eyebrow,
-            )}
-          </span>
-          <h1>
-            {t(
-              session?.status === 'active'
-                ? reusingPrevious
-                  ? '医生正在调取上次的记录'
-                  : '请根据医生的提问，回答问题'
-                : copy.title,
-            )}
-          </h1>
-          <p>
-            {t(
-              session?.status === 'active'
-                ? reusingPrevious
-                  ? '你不需要再次回答 Q1–Q8。请稍候，医生会和你一起继续查看上次的视觉表达；如果这次感受有变化，也可以直接告诉医生。'
-                  : '请放松，不需要担心回答得是否正确。请按照医生的提问，根据自己的真实感受回答；如果感到不舒服，可以随时告诉医生并暂停。'
-                : copy.copy,
-            )}
-          </p>
+          <span className="eyebrow">{t(waitingCopy.eyebrow)}</span>
+          <h1>{t(waitingCopy.title)}</h1>
+          <p>{t(waitingCopy.copy)}</p>
+          {imagePreparation && (
+            <div
+              className="patient-generation-progress"
+              aria-label={t('当前进度')}
+            >
+              <div className="patient-generation-progress__item is-complete">
+                <CheckCircleOutlined />
+                <span>{t('访谈已完成')}</span>
+              </div>
+              <div
+                className={`patient-generation-progress__item ${
+                  imageGenerating ? 'is-current' : 'is-complete'
+                }`}
+              >
+                {imageGenerating ? <i>2</i> : <CheckCircleOutlined />}
+                <span>{t('生成并检查图片')}</span>
+              </div>
+              <div
+                className={`patient-generation-progress__item ${
+                  imageReviewing ? 'is-current' : 'is-pending'
+                }`}
+              >
+                <i>3</i>
+                <span>{t('医生确认后展示')}</span>
+              </div>
+            </div>
+          )}
           {error && <Alert type="warning" showIcon message={error} />}
           <div className="waiting-status">
-            <span />{' '}
-            {t(
-              session?.status === 'active'
-                ? reusingPrevious
-                  ? '医生正在准备上次的记录'
-                  : '医生正在陪你完成访谈'
-                : session?.status === 'ended'
-                  ? '会话已结束'
-                  : session?.status === 'expired'
-                    ? '会话已过期'
-                    : session?.status === 'paused'
-                      ? '会话已暂停'
-                      : '医生正在为你准备',
-            )}
+            <span /> {t(waitingCopy.status)}
           </div>
         </section>
       )}
