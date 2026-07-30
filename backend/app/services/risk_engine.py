@@ -11,8 +11,13 @@ from app.models.entities import RiskRule
 from app.services.core import utc_now
 from app.services.text_normalization import normalize_multilingual_text
 
-RISK_RULE_VERSION = "RISK-V1.3"
-LEGACY_DEFAULT_RULE_VERSIONS = {"RISK-V1.0", "RISK-V1.1", "RISK-V1.2"}
+RISK_RULE_VERSION = "RISK-V1.4"
+LEGACY_DEFAULT_RULE_VERSIONS = {
+    "RISK-V1.0",
+    "RISK-V1.1",
+    "RISK-V1.2",
+    "RISK-V1.3",
+}
 
 RISK_MESSAGE = "内容存在风险，请修改后重试。"
 IDENTITY_MESSAGE = "请勿输入姓名、手机号、身份证号、邮箱或其他身份信息。"
@@ -127,9 +132,74 @@ DEFAULT_RULES = [
             "自伤",
             "割腕",
             "自杀",
+            "想死",
+            "想去死",
+            "想要死",
+            "希望死掉",
+            "希望自己死掉",
+            "不想活",
+            "不愿活",
+            "不愿继续活",
+            "不想继续活",
+            "活不下去",
+            "活够了",
+            "活着没意思",
+            "活着没有意思",
+            "活着没有意义",
+            "人生没意义",
+            "生命没意义",
+            "不如死了",
+            "死了算了",
+            "去死吧",
+            "寻死",
+            "求死",
+            "一心求死",
+            "轻生",
+            "自尽",
+            "自我了断",
+            "结束生命",
+            "结束自己的生命",
+            "结束我的生命",
+            "了结自己",
+            "结束一切",
+            "一了百了",
+            "生无可恋",
+            "厌世",
+            "死亡愿望",
+            "希望永远消失",
+            "从世界消失",
+            "从这个世界消失",
+            "想从世界消失",
+            "想消失",
+            "不想存在",
+            "不想在这个世界",
+            "不想醒来",
+            "不要醒来",
+            "不想再醒来",
+            "希望不要醒来",
+            "睡着不醒",
+            "没有活下去的理由",
+            "失去活下去的勇气",
+            "撑不下去",
+            "寻短见",
+            "一死了之",
+            "了却生命",
+            "想一了百了",
             "跳楼",
+            "跳桥",
             "上吊",
             "吞药",
+            "吞安眠药",
+            "服药过量",
+            "服毒",
+            "喝农药",
+            "卧轨",
+            "跳轨",
+            "投河",
+            "跳河",
+            "跳海",
+            "烧炭",
+            "开煤气",
         ],
         "patient_message_type": "crisis",
     },
@@ -454,7 +524,20 @@ ENGLISH_RISK_MARKERS: tuple[tuple[str, str], ...] = (
         r"lick(?:ing|ed|s)? (?:the )?blood|"
         r"mutilat(?:e|ed|ion)|severed limbs?|exposed organs?|self[- ]?harm|"
         r"self[- ]?injury|cut (?:my|their|his|her) wrists?|"
-        r"suicid(?:e|al)|hang myself|overdose)\b",
+        r"suicid(?:e|al|ality)|suicidal thoughts?|want to die|wanna die|"
+        r"wish (?:i|we) (?:were|was) dead|wish to be dead|hope to die|"
+        r"(?:do not|don(?:'|’| )?t) want to (?:live|be alive|be here)|"
+        r"no longer want to be here|(?:cannot|can(?:'|’| )?t) go on|"
+        r"no (?:reason|point) (?:to|in) (?:live|living)|"
+        r"life (?:is not|isn(?:'|’| )?t) worth living|better off dead|"
+        r"end (?:my|our|their|his|her) (?:own )?life|"
+        r"take (?:my|our|their|his|her) own life|kill myself|"
+        r"end it all|want everything to stop|never wake up|not wake up|"
+        r"disappear forever|wish (?:i|we) could disappear|"
+        r"death wish|(?:lose|lost) the will to live|tired of living|ready to die|"
+        r"plan to die|commit suicide|hang myself|slit my wrists?|"
+        r"jump off (?:a|the) (?:bridge|building)|(?:take an |)overdose|"
+        r"overdose on|poison myself|drown myself)\b",
         "流血自残",
     ),
     (
@@ -558,8 +641,11 @@ class RiskDecision:
 
 def normalize_for_risk(text: str) -> str:
     normalized = normalize_multilingual_text(text)
+    semantic_text = re.sub(r"[\W_]+", " ", normalized, flags=re.UNICODE)
     markers = "".join(
-        marker for pattern, marker in ENGLISH_RISK_MARKERS if re.search(pattern, normalized)
+        marker
+        for pattern, marker in ENGLISH_RISK_MARKERS
+        if re.search(pattern, normalized) or re.search(pattern, semantic_text)
     )
     return re.sub(r"[\W_]+", "", f"{normalized}{markers}", flags=re.UNICODE)
 

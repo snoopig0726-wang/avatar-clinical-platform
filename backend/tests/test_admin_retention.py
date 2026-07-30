@@ -121,12 +121,12 @@ async def test_admin_access_rules_audit_restore_and_permanent_delete(
             updated_rule = await client.put(
                 f"/api/admin/risk-rules/{first_rule['rule_id']}",
                 headers={**admin_headers, "Idempotency-Key": "update-risk-version"},
-                json={"is_enabled": False, "version": "RISK-V1.4"},
+                json={"is_enabled": False, "version": "RISK-V1.5"},
             )
-            assert updated_rule.json()["version"] == "RISK-V1.4"
+            assert updated_rule.json()["version"] == "RISK-V1.5"
             assert updated_rule.json()["is_enabled"] is False
             refreshed_rules = await client.get("/api/admin/risk-rules", headers=admin_headers)
-            assert {item["version"] for item in refreshed_rules.json()["items"]} == {"RISK-V1.4"}
+            assert {item["version"] for item in refreshed_rules.json()["items"]} == {"RISK-V1.5"}
 
             owner_login = await client.post(
                 "/api/auth/login",

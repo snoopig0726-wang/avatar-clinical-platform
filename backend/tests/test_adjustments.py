@@ -111,13 +111,13 @@ async def test_risk_matching_semantics(tmp_path) -> None:
         )
         assert legacy_rule is not None
         legacy_rule.trigger_terms = ["血腥"]
-        legacy_rule.version = "RISK-V1.2"
+        legacy_rule.version = "RISK-V1.3"
         await session.commit()
         await seed_default_risk_rules(session)
         await session.commit()
         await session.refresh(legacy_rule)
         assert "舔血" in legacy_rule.trigger_terms
-        assert legacy_rule.version == "RISK-V1.3"
+        assert legacy_rule.version == "RISK-V1.4"
         assert (await evaluate_adjustment_text(session, "不要出现自残内容")).allowed is False
         assert (await evaluate_adjustment_text(session, "不要生成刀具形象")).allowed is True
         assert (await evaluate_adjustment_text(session, "生成挥舞刀具的形象")).allowed is False
@@ -147,6 +147,44 @@ async def test_risk_matching_semantics(tmp_path) -> None:
         )
         for example in fragmented_injury_examples:
             assert (await evaluate_adjustment_text(session, example)).allowed is False, example
+        suicide_ideation_examples = (
+            "很想死",
+            "我不想活了",
+            "感觉自己活不下去了",
+            "活着没有意义",
+            "不如死了算了",
+            "我想轻生",
+            "想结束自己的生命",
+            "希望睡着以后不要醒来",
+            "已经没有活下去的理由",
+            "我真的撑不下去了",
+            "想从这个世界消失",
+            "准备寻短见",
+            "想一了百了",
+            "準備結束自己的生命",
+            "我不願繼續活下去",
+            "生無可戀，想要輕生",
+            "我撐不下去，想尋短見",
+            "I want to die",
+            "I want...to die",
+            "I don't want to live anymore",
+            "I don’t want to be here anymore",
+            "I wish I were dead",
+            "life isn't worth living",
+            "I would be better off dead",
+            "I want to end my life",
+            "I want to end-my-life",
+            "I want to take my own life",
+            "I want to kill myself",
+            "I hope I never wake up",
+            "I have lost the will to live",
+            "I wish I could disappear forever",
+            "I plan to jump off a bridge",
+        )
+        for example in suicide_ideation_examples:
+            decision = await evaluate_adjustment_text(session, example)
+            assert decision.allowed is False, example
+            assert decision.patient_message_type == "crisis", example
         assert (
             await evaluate_adjustment_text(session, "licking blood from a knife")
         ).allowed is False
@@ -177,6 +215,9 @@ async def test_risk_matching_semantics(tmp_path) -> None:
             "脸色更有血色，看起来健康一些",
             "脸型像刀削面一样更瘦",
             "add a healthy rosy complexion",
+            "这个表情不要太死板",
+            "背景边缘不要留下死角",
+            "the face should look less lifeless and more engaged",
         )
         for example in multilingual_safe_examples:
             assert (await evaluate_adjustment_text(session, example)).allowed is True

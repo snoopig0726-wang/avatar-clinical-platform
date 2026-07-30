@@ -10,7 +10,7 @@ instead of keeping a second, divergent implementation. In particular:
 
 - Q1-Q8 accepts one to six controlled emotions.
 - Q1-Q8 does not require a ``risk_level`` field.
-- free-text adjustment risk screening is handled separately by RISK-V1.3.
+- free-text adjustment risk screening is handled separately by RISK-V1.4.
 - Prompt construction requires doctor-confirmed effective visual features.
 
 Do not import this documentation path from production code.
