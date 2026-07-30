@@ -1,150 +1,168 @@
 # 技术方案
 
-- 所属产品：幻听患者个性化 Avatar 生成系统
-- 关联 PRD：https://ycnhe29l1vtr.feishu.cn/docx/JAY0d7gkgoVAAjxa8vVcoQK1nKc
-- 文档版本：V1.0
-- 文档状态：Draft
-- 来源：PRD V3.0 审查修订
+- 文档版本：V1.2
+- 当前状态：与 2026-07-30 项目实现同步
 
-## 1. V1 技术边界
+## 1. 当前技术边界
 
-V1 目标架构支持医生、管理员和受邀患者三类角色。患者不建立长期账户；系统不接入医院病历系统；模型供应商、模型名称和具体 API 仍待定，所有模型调用必须经过服务端适配层。当前仓库中的单机 SQLite、SVG Demo 和既有 `app/` 目录不代表目标 V1 架构。
+系统面向医生、受邀患者和管理员三类角色。患者不建立长期账户，系统不接入医院病历系统。浏览器只调用项目后端，OpenAI API Key 不进入前端。
 
-## 2. 整体架构
+当前真实图像生成链路已经接入 OpenAI GPT Image 2，不再以占位图片或本地模拟结果代表业务生图成功。
 
-目标 V1 采用前后端分离、异步生成和适配器隔离的 Web 架构：
+## 2. 系统结构
 
 ```text
-医生工作台 / 患者受监督会话 / 管理员后台
-                    |
-             React + TypeScript
-                    |
-          FastAPI REST API + 鉴权层
-                    |
-    领域服务：病例 / 会话 / 版本 / 风险 / 下载
-          |                 |
- PostgreSQL + Redis     Celery Worker
-          |                 |
-     S3 对象存储     模型适配器 + 安全检查适配器
-                    |
-              外部模型供应商（待定）
+React / TypeScript / Ant Design
+              |
+         FastAPI REST API
+              |
+  领域服务、鉴权、风险检查、审计
+       |                  |
+PostgreSQL/SQLite      Redis/Celery
+       |                  |
+本地或 S3 对象存储   GPT Image 2 适配器
 ```
 
-核心原则：浏览器永不持有模型密钥；患者请求只能访问当前会话已授权版本；生成、检查、删除等耗时任务不阻塞 API 请求；供应商差异只存在于适配器内部。
+本地轻量开发可使用 SQLite、本地文件存储和内联生成；Docker Compose 形态使用 PostgreSQL、Redis、Celery 和 MinIO。两种形态共享同一套业务服务和数据库模型。
 
-## 3. 技术栈选型
+## 3. 当前技术栈
 
-| 层级 | V1 选型 | 职责 | 替换边界 |
-|-|-|-|-|
-| 前端 | React + TypeScript + Ant Design | 医生工作台、患者会话、管理员后台和状态展示 | 页面组件和 API client 可独立替换 |
-| 构建 | Vite 或同等前端构建工具 | 本地开发、测试构建和静态资源打包 | 不影响后端接口 |
-| 后端 | FastAPI + Python 3.11+ | REST API、鉴权、业务编排和 OpenAPI 文档 | 路由层不得直接依赖模型供应商 SDK |
-| ORM/迁移 | SQLAlchemy 2.x AsyncIO + Alembic | 数据访问、事务和数据库迁移 | 通过 repository/service 边界替换 |
-| 数据库 | PostgreSQL | 病例、会话、版本、调整、规则和审计元数据 | 需要保持事务、约束和迁移兼容 |
-| 缓存/会话 | Redis | 会话状态、幂等键、限流、任务锁和短期恢复状态 | 不作为业务数据唯一存储 |
-| 异步任务 | Celery + Redis Broker | 图像生成、安全检查、删除任务和重试 | Worker 可替换，但任务状态契约不变 |
-| 文件存储 | S3 兼容对象存储 | Avatar 图片、临时文件和删除生命周期 | 通过 StorageAdapter 隔离供应商 |
-| 认证 | JWT 传输凭证 + 服务端会话/撤销状态 | 医生/管理员登录和患者设备会话 | 患者凭证不放入 URL，不暴露模型密钥 |
-| 反向代理 | Nginx 或同等网关 | TLS、静态资源、请求体和超时策略 | 不承载业务权限判断 |
-| 部署 | Docker + Docker Compose（原型） | 本地/测试环境编排 | 生产可迁移到 Kubernetes 等平台 |
-| 传输安全 | TLS 1.3 | 全链路 HTTPS | 生产环境必须启用 |
+| 层级 | 实现 | 说明 |
+|---|---|---|
+| 前端 | React 19、TypeScript、Ant Design 6、React Router 7 | 医生、患者、管理员三端页面及三语言界面 |
+| 构建 | Vite 8 | 本地开发、类型检查和生产构建 |
+| 端到端测试 | Playwright | 桌面与移动端、多语言和核心流程 |
+| 后端 | FastAPI、Python 3.11+、Pydantic 2 | REST API、鉴权、业务编排和 OpenAPI |
+| ORM/迁移 | SQLAlchemy 2 AsyncIO、Alembic | SQLite/PostgreSQL 数据访问和迁移 |
+| 数据库 | 本地可用 SQLite；Compose 使用 PostgreSQL 16 | 病例、会话、版本、调整、规则和审计 |
+| 队列 | Celery + Redis | Compose 环境的异步生成与调度 |
+| 图像存储 | 本地文件或 S3/MinIO | 由存储适配器隔离 |
+| 图像生成 | OpenAI SDK + `gpt-image-2` | 当前业务生图 Provider |
+| 语义图像安全 | 独立安全适配器 | 与 GPT Image 2 生图调用分离配置 |
+| 部署 | Netlify 前端 + 可达的 FastAPI 后端；或 Docker Compose | Netlify 不托管本地数据库和常驻后端 |
 
-模型供应商不在 V1 技术栈中写死。特征转换、图像生成和图片安全检查必须实现统一适配器接口，开发阶段使用 Mock Provider。
+## 4. 前端模块
 
-## 4. 系统模块与数据流
+- 首页与医生、患者、管理员登录页；
+- 医生工作台、病例详情、邀请码和会话控制；
+- Q1–Q8 录入、视觉特征确认和页面内直接生成；
+- 图像版本审核、授权、下载、删除和回退；
+- 患者等待、生成中、图像满意/调整、暂停和会话结束体验；
+- 管理员医生审批、风险规则、统计、审计与归档恢复；
+- English、简体中文、繁體中文三语言切换。
 
-### 4.1 用户端模块
+患者页和医生页使用短轮询同步会话、风险事件、调整和生成状态，因此状态更新不依赖手动刷新。
 
-- **医生工作台**：病例、邀请码、Q1–Q8、视觉特征确认、生成、审核、版本、回退、授权和下载。
-- **患者受监督会话**：邀请码兑换、等待、已授权 Avatar 查看、最多 3 次调整、安全暂停和结束状态。
-- **管理员后台**：医生账户、风险规则、聚合统计、脱敏审计和归档恢复。
+## 5. 后端领域模块
 
-### 4.2 后端领域模块
+- `auth`：员工申请、邮箱验证、登录、访问会话和撤销；
+- `cases`：病例、归档、恢复和留存计时；
+- `invites` / `sessions`：邀请码、设备绑定、知情同意和会话状态；
+- `features`：Q1–Q8、视觉特征映射和医生确认；
+- `avatars`：GPT Image 2 生成、版本状态、安全、审核、授权和下载；
+- `adjustments`：患者调整、多语言风险检查、医生可选改写、重新映射和生成；
+- `admin`：账号、规则、统计、审计和留存任务；
+- `storage`：本地或 S3 图像存储；
+- `workers`：Celery 生成任务和调度任务。
 
-- `auth`：医生/管理员认证、会话撤销和权限校验；
-- `cases`：病例、归档、恢复和 30 天删除起点；
-- `sessions`：邀请码、设备绑定、等待/进行/暂停/结束状态；
-- `avatar_versions`：生成版本、安全状态、医生审核、当前版本和授权关系；
-- `adjustments`：患者调整次数、风险校验、医生审核和串行约束；
-- `risk_rules`：管理员规则和风险事件；
-- `generation`：任务编排、幂等、取消、重试和供应商错误归一化；
-- `storage`：图片上传、短时下载地址、生命周期删除；
-- `audit`：脱敏事件和删除任务结果。
+## 6. GPT Image 2 接入
 
-### 4.3 关键数据流
+### 6.1 适配器边界
 
-1. 医生完成 Q1–Q8，API 在事务中保存结构化答案并创建特征提取任务。
-2. 医生确认视觉特征后创建生成任务；API 返回任务 ID，Celery 异步执行。
-3. Worker 调用模型适配器生成候选图片，再调用图片安全检查适配器。
-4. 安全通过后写入待医生审核的 Avatar 版本；患者仍不可见。
-5. 医生审核通过并授权当前会话后，患者接口才返回该版本的短时访问地址。
-6. 患者调整建议经过风险校验和医生审核后，创建下一代版本；失败不改变当前已授权版本。
-7. 回退撤销患者授权；重新审核和授权后才能恢复患者查看。
+业务服务通过统一图像生成接口调用 Provider。OpenAI SDK 只出现在服务端适配层，路由和前端不直接依赖 SDK。
 
-## 5. 模型接入架构
+当前生产/联调配置：
 
-### 5.1 适配器职责
+```env
+MODEL_PROVIDER=openai
+MODEL_NAME=gpt-image-2
+MODEL_QUALITY=low
+MODEL_API_KEY=<server-side-secret>
+```
 
-- `FeatureMappingAdapter`：结构化 Q1–Q8 → 视觉特征；
-- `ImageGenerationAdapter`：受控视觉特征 → 图片候选结果；
-- `ImageSafetyAdapter`：图片候选结果 → 安全检查结果；
-- `MockProvider`：不调用外部供应商，用于本地开发和自动化测试。
+`MODEL_API_KEY` 或兼容映射的 `OPENAI_API_KEY` 只在后端进程和生成 Worker 中读取。GitHub、Netlify 前端变量和浏览器网络响应都不能包含密钥。
 
-业务服务只依赖统一接口，不直接导入供应商 SDK。供应商配置通过环境变量或密钥管理服务注入：provider、model、endpoint、timeout、retry policy 和版本标识均可配置。
+### 6.2 Prompt 和快照
 
-### 5.2 统一任务契约
+- Prompt 模板版本：`voice-to-appearance-v1.1`
+- 输入：医生确认后的受控视觉特征，以及经医生审核的受控调整指令
+- 数据库保存：Provider、模型、请求 ID、模板版本、Prompt SHA-256、输入快照和输出元数据
+- 数据库不保存：完整 Prompt、API Key
 
-每个生成任务必须保存 request_id、provider、model、model_version、prompt_template_version、状态、开始/结束时间、供应商请求 ID 和脱敏错误码。原始患者调整文本不得发送给供应商。
+### 6.3 生成状态
 
-任务状态至少包括：`queued`、`extracting`、`generating`、`checking`、`pending_doctor_review`、`approved`、`rejected`、`cancelled`、`failed`。
+当前没有独立 `generation_jobs` 表。`avatar_versions` 自身记录：
 
-### 5.3 超时、重试和供应商错误
+- 生成模式和轮次；
+- `generation_status`；
+- 图像对象键；
+- Provider 元数据；
+- 安全状态；
+- 医生审核状态；
+- 失败代码和时间。
 
-- 网络/5xx/限流：按任务类型执行有限指数退避；
-- 4xx 参数或安全拒绝：不重试，归一化为业务错误；
-- 超时：任务标记为可重试失败，不替换当前版本；
-- 取消：Worker 检查取消标记，结果落地前丢弃；
-- 重复请求：通过幂等键返回原任务，不创建第二个任务；
-- 所有供应商错误写入脱敏审计，不向患者暴露内部错误码。
+本地配置可使用 `GENERATION_DISPATCH_MODE=inline`，Docker Compose 使用 `celery`。两种模式返回相同的 `AvatarVersionResponse`，前端通过版本接口轮询。
 
-## 6. 权限与会话
+### 6.4 自动化测试
 
-- 医生只能访问自己创建或被明确授权的病例；管理员可恢复归档病例但不能读取病例内容或图片。
-- 患者凭一次性会话凭证访问当前会话；凭证与设备绑定，不进入 URL，服务端只保存哈希。
-- 会话结束、邀请码撤销、邀请码过期或病例归档后，服务端立即拒绝患者凭证。
-- 同一设备刷新或短暂断网允许恢复；换设备必须由医生重新创建邀请码。
-- 安全暂停只能由医生恢复；结束会话后旧设备、旧页面和旧链接均失效。
+自动化测试通过可控的测试替身覆盖成功、超时、安全阻断、无效图像和 Provider 失败等分支，以避免测试套件产生真实生图费用。测试替身只属于测试机制，不代表当前业务运行 Provider。
 
-## 7. 状态、幂等与任务恢复
+## 7. 风险与安全
 
-产品状态与内部任务状态分离。生成、审核、授权、回退、归档和删除写操作必须支持幂等键和状态前置条件，避免重复生成、重复授权或产生两个当前版本。
+- 患者调整和医生改写都执行 `RISK-V1.3`；
+- 支持简体中文、繁体中文和英文输入；
+- Unicode、大小写、空白、标点和简繁体变体先归一化再判定；
+- 风险命中不进入生图；
+- 图像生成后仍需图像安全检查和医生审核；
+- 未授权版本患者不可见；
+- 患者不适会暂停会话，只有医生处理后才能恢复。
 
-- 网络异常：保留已确认答案和当前版本，前端显示重试；
-- 登录过期：先保存草稿，再要求重新登录；
-- 任务取消：丢弃未审核结果，当前版本不变；
-- 归档竞态：归档优先终止患者会话，后台任务完成后不得重新开放访问；
-- Worker 重启：任务可从持久化状态恢复或安全标记为失败，不重复调用供应商。
+完整规则见 `docs/safety/AI-SAFETY.md`。
 
-## 8. 环境与部署
+## 8. 会话级状态
 
-| 环境 | 组成 | 目标 |
-|-|-|-|
-| 本地开发 | Docker Compose、PostgreSQL、Redis、MinIO/S3 兼容存储、Celery Worker、Mock Provider | 不调用真实模型，支持快速联调 |
-| 测试环境 | 独立数据库、对象存储、Redis、Worker 和测试 Provider | 验证接口、权限、任务和安全流程 |
-| 生产环境 | 多实例 API、独立 Worker、PostgreSQL、高可用 Redis、S3、Nginx/TLS、密钥管理 | 受监督内部使用和可审计运行 |
+同一病例可以创建多次独立会话。以下状态均按 `session_id` 计算：
 
-至少配置：`DATABASE_URL`、`REDIS_URL`、`S3_ENDPOINT`、`S3_BUCKET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`MODEL_PROVIDER`、`MODEL_ENDPOINT`、`MODEL_API_KEY`、`MODEL_NAME`、`MODEL_TIMEOUT_SECONDS`、`SESSION_TTL_HOURS`、`RETENTION_DAYS=30`。密钥只在服务端读取，不提交代码仓库，不返回前端。
+- Q1–Q8；
+- 视觉特征来源；
+- 患者满意版本；
+- 每会话最多 3 次调整；
+- 暂停、恢复和结束；
+- 患者可见授权。
 
-## 9. 删除、监控与告警
+因此创建新邀请码并兑换后，调整额度回到 0/3，生成入口依据新会话特征重新判断。
 
-病例归档时写入不可回退的 `retention_started_at` 和 `retention_due_at`。到期任务永久删除病例、图片、版本、访谈答案、调整文本、风险数据、关联文件和备份；管理员恢复不会暂停或重置原删除时间。删除任务必须可重试、可观测，并记录最小化成功/失败结果。
+## 9. 环境与部署
 
-监控至少覆盖：生成成功率、生成耗时、供应商错误率、风险服务失败率、任务重复率、患者会话失效率、删除任务积压、对象存储删除失败和权限拒绝次数。
+### 9.1 本地轻量运行
 
-## 10. 文档关系
+- FastAPI
+- SQLite
+- 本地图像目录
+- 内联生成
+- Vite 开发服务器
 
-- `PROJECT-MAP.md`：目标 V1 工程目录和模块导航；
-- `DATA.md`：数据实体、版本、留存和删除设计；
-- `API.md`：接口路径、权限和调用契约；
-- `AI-SAFETY.md`：当前 V1 字段映射和安全规则；
-- `TEST.md`：测试矩阵和验收用例。
+适合 UI 调整和单机联调。真实 GPT Image 2 调用仍需服务端 API Key。
+
+### 9.2 Docker Compose
+
+- FastAPI
+- PostgreSQL
+- Redis
+- Celery Worker/Beat
+- MinIO
+- 静态前端容器
+
+若使用 Compose 进行真实生图，必须显式设置 `MODEL_PROVIDER=openai` 和服务端密钥，不能依赖模板中的安全测试默认值。
+
+### 9.3 Netlify
+
+Netlify 部署静态前端，`VITE_API_BASE_URL` 指向可从公网访问的 FastAPI 地址。若后端仍运行在个人电脑上，临时隧道关闭、电脑待机、网络切换或后端进程退出都会导致线上登录与生图不可用。
+
+要让朋友稳定测试并统一消耗项目方的 OpenAI 额度，应将后端部署到持续运行的服务器，并只在那里配置 API Key。
+
+## 10. 当前已知差异
+
+- 运行时 Prompt 已是 `voice-to-appearance-v1.1`，但 `/api/meta/contracts` 的旧版本值仍需同步修正。
+- 移动端英文首页仍有一项标题裁切的端到端测试失败，发布前应修复。
+- 语义图像安全是独立 Provider 配置，不能把它的测试配置误写成 GPT Image 2 生图状态。

@@ -43,7 +43,7 @@ uvicorn app.main:app --reload
 
 本地启动还会幂等生成三组去标识化示例数据：
 
-- `DEMO-VOICE-001`：会话进行中，Q1–Q8、视觉映射和医生确认均已完成；包含 Mock Avatar 授权和一条待医生审核的患者调整；
+- `DEMO-VOICE-001`：会话进行中，Q1–Q8、视觉映射和医生确认均已完成；包含一条仅供界面联调的示例版本授权和一条待医生审核的患者调整；
 - `DEMO-VOICE-002`：患者已兑换邀请码，等待医生确认同意并开始；
 - `DEMO-VOICE-003`：已创建尚未兑换的一次性邀请码，可用于患者端联调。
 
@@ -81,16 +81,19 @@ docker compose up --build
 
 启动后访问 `http://localhost:5173`；管理员后台为 `http://localhost:5173/admin/login`；API 文档位于 `http://localhost:8000/api/docs`。Compose 同时启动 Celery Worker 和每小时执行一次的留存调度器。
 
-当前已接入 GPT Image 2 适配器。未配置密钥时默认使用 Mock Provider，仍会完整执行异步任务、图片检查、MinIO 存储、医生审核和患者授权。正式联调前在项目根目录创建 `.env`：
+当前业务生图已经接入 OpenAI GPT Image 2。真实联调必须在项目根目录创建 `.env` 并由后端读取密钥：
 
 ```dotenv
 MODEL_PROVIDER=openai
-OPENAI_API_KEY=sk-...
+MODEL_API_KEY=sk-...
 MODEL_QUALITY=low
 SEMANTIC_IMAGE_SAFETY_PROVIDER=openai
+SEMANTIC_IMAGE_SAFETY_API_KEY=sk-...
 ```
 
-`MODEL_QUALITY=low` 使用 GPT Image 2 的快速质量档，适合医生监督下的候选图迭代；可改为 `medium` 或 `high` 提升最终画质，但生成时间和费用会相应增加。GPT Image 2 与独立语义图片复检默认共用后端 `OPENAI_API_KEY`；如需隔离密钥，可另设 `SEMANTIC_IMAGE_SAFETY_API_KEY`。密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
+`MODEL_QUALITY=low` 使用 GPT Image 2 的快速质量档，适合医生监督下的候选图迭代；可改为 `medium` 或 `high` 提升最终画质，但生成时间和费用会相应增加。直接运行 FastAPI 时使用 `MODEL_API_KEY`；Docker Compose 也支持把宿主机 `OPENAI_API_KEY` 映射为该变量。独立语义图片复检使用 `SEMANTIC_IMAGE_SAFETY_API_KEY`，可以与生图密钥相同，也可以单独配置。密钥只进入后端和 Worker，不会传到浏览器或写入数据库。生成任务只保存 Prompt 模板版本与摘要，不保存完整 Prompt。
+
+未配置有效密钥时，真实生图请求会失败，不应把测试占位结果当成 GPT Image 2 成功。自动化测试通过不产生真实费用的可控测试替身覆盖成功、超时和安全失败分支；该机制只用于测试。
 
 ### 自动验证
 
@@ -130,6 +133,6 @@ Netlify 仅承载静态前端。FastAPI、Celery Worker/Beat、PostgreSQL、Redi
 
 ## 当前阶段
 
-当前已经打通医生账户申请、本地开发邮箱验证、管理员审批、登录、病例与监督会话、Q1–Q8、声音到视觉映射、患者调整风险拦截与医生审核，以及管理员规则维护、聚合统计、运行告警、脱敏审计、归档恢复和30天到期永久删除。公开高风险入口使用 Redis 匿名化限流；病例关键写操作使用 PostgreSQL 行锁保护并发状态。GPT Image 2、Celery 生成状态机、MinIO 图片存储、独立语义图片安全复检、医生审核与患者授权、历史版本重新审核回退、不可变版本快照和指定版本下载审计已经实现；未提供 OpenAI Key 时由 Mock Provider 生成联调图片并执行可控 Mock 语义门禁。患者原文加密保存且不会直接进入模型；风险拦截原文和完整生图 Prompt 均不落库。
+当前已经打通医生账户申请、本地开发邮箱验证、管理员审批、登录、病例与监督会话、Q1–Q8、声音到视觉映射、GPT Image 2 生图、患者调整风险拦截与医生审核，以及管理员规则维护、聚合统计、运行告警、脱敏审计、归档恢复和 30 天到期永久删除。公开高风险入口使用 Redis 匿名化限流；病例关键写操作使用 PostgreSQL 行锁保护并发状态。Celery 生成状态、MinIO 图片存储、独立语义图片安全复检、医生审核与患者授权、历史版本重新审核回退、不可变版本快照和指定版本下载审计已经实现。患者调整额度按会话计算，每个新邀请码产生的新会话重新获得 3 次额度；简体中文、繁体中文和英文调整输入均经过 `RISK-V1.2`。患者原文加密保存且不会直接进入模型；风险拦截原文和完整生图 Prompt 均不落库。
 
 当前实现状态见 [`docs/decisions/IMPLEMENTATION-STATUS.md`](docs/decisions/IMPLEMENTATION-STATUS.md)。

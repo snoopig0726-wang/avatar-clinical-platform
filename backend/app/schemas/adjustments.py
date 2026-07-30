@@ -48,6 +48,7 @@ class PatientAdjustmentListResponse(BaseModel):
 
 class DoctorAdjustmentResponse(PatientAdjustmentResponse):
     controlled_instruction: str | None = None
+    clinician_edited_instruction: str | None = None
     suggested_controlled_instruction: str
     controlled_options: list[str]
 
@@ -60,10 +61,31 @@ class DoctorAdjustmentListResponse(BaseModel):
     controlled_options: list[str]
 
 
+class RemapAdjustmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clinician_edited_instruction: str = Field(min_length=2, max_length=300)
+
+    @field_validator("clinician_edited_instruction")
+    @classmethod
+    def normalize_edited_instruction(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise ValueError("clinician_edited_instruction must contain at least two characters")
+        return stripped
+
+
+class AdjustmentRemapResponse(BaseModel):
+    clinician_edited_instruction: str
+    suggested_controlled_instruction: str
+    controlled_options: list[str]
+
+
 class ReviewAdjustmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["approve_as_is", "approve_edited", "reject"]
+    clinician_edited_instruction: str | None = Field(default=None, max_length=300)
     controlled_instruction: str | None = Field(default=None, max_length=200)
     rejection_reason: str | None = Field(default=None, max_length=300)
 
@@ -76,6 +98,25 @@ class ReviewAdjustmentRequest(BaseModel):
             self.rejection_reason = reason
         elif self.rejection_reason is not None:
             raise ValueError("rejection_reason is only allowed when rejecting")
+
+        if self.decision == "approve_edited":
+            edited = (self.clinician_edited_instruction or "").strip()
+            if edited:
+                if len(edited) < 2:
+                    raise ValueError(
+                        "clinician_edited_instruction must contain at least two characters"
+                    )
+                self.clinician_edited_instruction = edited
+            elif not self.controlled_instruction:
+                raise ValueError(
+                    "clinician_edited_instruction is required when approving an edit"
+                )
+            else:
+                self.clinician_edited_instruction = None
+        elif self.clinician_edited_instruction is not None:
+            raise ValueError(
+                "clinician_edited_instruction is only allowed when approving an edit"
+            )
         return self
 
 

@@ -2,66 +2,51 @@
 
 ## Comparison target
 
-- Source visual truth: `D:\xwechat_files\wxid_phfkoz2s1svp11_64f7\temp\RWTemp\2026-07\ee745c3c4cab68f85d5bf9b597f7de0c\f91df14237a7741e5c0ae0d678e5a118.png`
-- Source pixels: 1848 × 1200.
-- Implementation: `http://localhost:5173`
-- Browser: Microsoft Edge through Playwright.
-- Desktop viewport: 1600 × 1000 CSS pixels, device scale factor 1.
-- Mobile viewport: 390 × 844 CSS pixels, device scale factor 1.
-- State: public landing page, empty patient invitation form, and empty clinician login form.
-- API usage: none. No form was submitted and no image-generation request was made.
-
-## Rendered evidence
-
-| Surface | Desktop screenshot | Pixel dimensions | Mobile screenshot | Pixel dimensions |
-| --- | --- | --- | --- | --- |
-| Landing | `tmp/product-design/home-background-desktop.png` | 1600 × 2443 | `tmp/product-design/home-background-mobile.png` | 390 × 4138 |
-| Patient invitation | `tmp/product-design/patient-background-desktop.png` | 1600 × 1000 | `tmp/product-design/patient-background-mobile.png` | 390 × 1002 |
-| Clinician login | `tmp/product-design/doctor-background-desktop.png` | 1600 × 1000 | `tmp/product-design/doctor-background-mobile.png` | 390 × 953 |
-
-The full-page landing capture was cropped to its first 1600 × 1000 pixels for normalized comparison. The two access pages already match the comparison viewport.
+- Source visual truth: `C:\Users\lg140\AppData\Local\Temp\codex-clipboard-f6eac5fb-ab15-484c-b5d5-f95ea9491f4e.png`.
+- Source pixels: 868 × 502.
+- Implementation: `http://localhost:5173`.
+- Desktop evidence: `tmp/product-design/home-split-desktop.png`.
+- Desktop pixels and CSS viewport: 1600 × 728 captured within a 1600 × 1000 viewport, device scale factor 1.
+- Mobile evidence: `tmp/product-design/home-split-mobile.png`.
+- Mobile pixels and CSS viewport: 390 × 1117 captured within a 390 × 844 viewport, device scale factor 1.
+- State: public landing page in Simplified Chinese.
 
 ## Full-view comparison evidence
 
-Each file contains the matching prototype region and implementation in one 2072 × 715 image:
-
-- `tmp/product-design/home-background-comparison.png`
-- `tmp/product-design/patient-background-comparison.png`
-- `tmp/product-design/doctor-background-comparison.png`
-
-Focused comparisons were not required because the hero, image crop, overlaid copy, form, and safety panel are all legible at the normalized full-view scale.
+- Combined reference and implementation: `tmp/product-design/home-split-comparison.png`.
+- The reference and desktop implementation were normalized into equal-width panels in one 1200 × 407 comparison image.
+- Focused-region comparison was not needed because the requested relationship—the copy and image occupying distinct columns—is clearly visible in the full hero comparison.
 
 ## Findings
 
-- Fonts and typography: passed. Existing product typography and hierarchy remain intact; overlaid text uses sufficient weight and text shadow on photographic areas.
-- Spacing and layout rhythm: passed. The landing hero now reads as one integrated visual frame; access-page headings and safety lists retain balanced spacing over the background imagery.
-- Colors and visual tokens: passed. Pale-mint and clinical-green overlays match the established product palette while preserving contrast.
-- Image quality and asset fidelity: passed. The supplied raster assets remain sharp, undistorted, and intentionally cropped. No placeholder or code-drawn replacement is used.
-- Copy and content: passed. Existing localized content and operational labels are unchanged.
-- Responsive behavior: passed. All three routes have zero horizontal overflow at 1600 px and 390 px. The landing image remains a subtle background on mobile; access-page forms remain first at phone width.
-- Runtime and interaction: passed. All routes returned HTTP 200 with no console or page errors. Public navigation and required form fields were verified without submitting forms.
+- Fonts and typography: passed. Existing product type styles remain legible and the heading wraps cleanly without overlapping the image.
+- Spacing and layout rhythm: passed. At 1600 px the copy and photograph occupy independent left and right grid tracks with a 92 px gap. At 390 px they become stacked blocks with 30 px separation.
+- Colors and visual tokens: passed. The pale clinical background, green text, button colors, radius, and shadow remain consistent with the existing design system.
+- Image quality and asset fidelity: passed. The supplied clinical-session raster remains undistorted at a 4:3 ratio with its own 24 px rounded container.
+- Copy and content: passed. Existing localized copy and both primary actions are unchanged.
+- Responsive behavior: passed. Horizontal overflow is 0 px at both 1600 px and 390 px.
+- Runtime and interactions: passed. Both primary actions navigate to `/patient/invite` and `/doctor/login`; no page or console errors were recorded.
 
 ## Comparison history
 
 ### Pass 1
 
-- [P1] The landing image appeared as an independent image card instead of a background integrated with the hero copy.
-- [P2] Access-page safety points sat directly on the photograph and did not reproduce the prototype’s grouped dark information panel.
+- [P1] The previous implementation placed the hero copy over the photograph inside one immersive background frame, contradicting the new reference.
 
-### Fixes
+### Fix
 
-- Converted the landing hero into a single isolated background frame with the supplied image covering the frame and a left-to-right readability gradient beneath the copy.
-- Added a semi-transparent, blurred safety panel over patient and clinician background images and refined the photographic overlay.
-- Added responsive gradient and crop rules so mobile copy remains readable without introducing overflow.
+- Replaced the immersive frame with a two-column grid and a standalone photograph container.
+- Removed the decorative full-frame image treatment.
+- Added a mobile single-column fallback while preserving all actions and copy.
 
 ### Pass 2
 
-- Post-fix comparison evidence: the three `*-background-comparison.png` files listed above.
+- Post-fix evidence: `tmp/product-design/home-split-comparison.png`, `tmp/product-design/home-split-desktop.png`, and `tmp/product-design/home-split-mobile.png`.
 - No actionable P0, P1, or P2 findings remain.
 
 ## Follow-up polish
 
-- [P3] If a future iteration aims for tighter prototype fidelity, the landing hero can be shortened slightly and the copy size reduced at intermediate tablet widths.
+- The reference uses shorter copy and a more compact hero, but retaining the product's current clinical messaging is an intentional content constraint rather than a layout defect.
 
 ## Final result
 

@@ -11,16 +11,69 @@ from app.models.entities import RiskRule
 from app.services.core import utc_now
 from app.services.text_normalization import normalize_multilingual_text
 
-RISK_RULE_VERSION = "RISK-V1.0"
+RISK_RULE_VERSION = "RISK-V1.3"
+LEGACY_DEFAULT_RULE_VERSIONS = {"RISK-V1.0", "RISK-V1.1", "RISK-V1.2"}
 
 RISK_MESSAGE = "内容存在风险，请修改后重试。"
 IDENTITY_MESSAGE = "请勿输入姓名、手机号、身份证号、邮箱或其他身份信息。"
 CRISIS_MESSAGE = "请先暂停操作，并联系现场医生获得支持。"
 SERVICE_UNAVAILABLE_MESSAGE = "风险校验暂时不可用，请稍后重试。"
 
-EXCLUSIONS = ["没有", "不要", "不包含", "禁止", "避免"]
-ACTION_CONTEXT = ["攻击", "伤害", "威胁", "挥舞", "瞄准", "使用", "生成"]
-VISUAL_CONTEXT = ["生成", "形象", "表情", "场景", "视觉化"]
+EXCLUSIONS = ["没有", "不要", "不包含", "禁止", "避免", "去掉", "移除", "排除", "不显示"]
+ACTION_CONTEXT = [
+    "攻击",
+    "伤害",
+    "威胁",
+    "挥舞",
+    "瞄准",
+    "使用",
+    "生成",
+    "手持",
+    "拿着",
+    "携带",
+    "指向",
+    "砍",
+    "刺",
+    "射击",
+    "引爆",
+]
+WEAPON_RISK_CONTEXT = [
+    *ACTION_CONTEXT,
+    "血",
+    "鲜血",
+    "血液",
+    "血迹",
+    "血渍",
+    "血痕",
+    "血点",
+    "血滴",
+    "带血",
+    "染血",
+    "血染",
+    "流血",
+    "出血",
+    "淌血",
+    "滴血",
+    "伤口",
+    "创口",
+    "裂口",
+    "切口",
+    "刀口",
+]
+VISUAL_CONTEXT = [
+    "生成",
+    "形象",
+    "表情",
+    "场景",
+    "视觉化",
+    "画面",
+    "图片",
+    "肖像",
+    "外观",
+    "描绘",
+    "添加",
+    "变成",
+]
 
 DEFAULT_RULES = [
     {
@@ -31,12 +84,45 @@ DEFAULT_RULES = [
             "血腥",
             "鲜血",
             "流血",
+            "出血",
+            "淌血",
+            "滴血",
+            "舔血",
+            "舐血",
+            "血迹",
+            "血渍",
+            "血痕",
+            "血点",
+            "血滴",
+            "带血",
+            "染血",
+            "血染",
+            "血泊",
+            "喷血",
+            "溅血",
+            "血淋淋",
             "血肉模糊",
             "伤口",
             "开放性伤口",
+            "创口",
+            "裂口",
+            "切口",
+            "刀口",
+            "刀疤",
+            "伤疤",
             "割伤",
+            "刀伤",
+            "枪伤",
+            "烧伤",
+            "烫伤",
+            "割喉",
+            "割颈",
+            "割脉",
             "骨折",
             "断肢",
+            "残肢",
+            "器官外露",
+            "内脏外露",
             "自残",
             "自伤",
             "割腕",
@@ -56,14 +142,32 @@ DEFAULT_RULES = [
             "匕首",
             "菜刀",
             "砍刀",
+            "武士刀",
+            "军刀",
+            "刺刀",
+            "刀刃",
+            "刀锋",
+            "刀尖",
+            "利刃",
+            "锐器",
+            "凶器",
+            "剃刀",
+            "美工刀",
             "枪",
             "手枪",
             "步枪",
+            "枪械",
             "子弹",
+            "弹药",
             "炸弹",
             "爆炸物",
+            "手榴弹",
+            "地雷",
+            "火箭筒",
             "燃烧瓶",
             "棍棒",
+            "铁锤",
+            "铁链",
             "斧头",
             "电锯",
             "弓弩",
@@ -71,7 +175,7 @@ DEFAULT_RULES = [
             "硫酸",
             "绞索",
         ],
-        "context_terms": ACTION_CONTEXT,
+        "context_terms": WEAPON_RISK_CONTEXT,
         "exclusion_terms": EXCLUSIONS,
         "patient_message_type": "risk",
     },
@@ -96,6 +200,10 @@ DEFAULT_RULES = [
             "血眼",
             "裂嘴",
             "无脸",
+            "腐烂面孔",
+            "腐尸",
+            "空洞眼眶",
+            "扭曲肢体",
             "畸形怪物",
         ],
         "context_terms": VISUAL_CONTEXT,
@@ -119,6 +227,19 @@ DEFAULT_RULES = [
             "砍杀",
             "刺杀",
             "殴打",
+            "勒颈",
+            "扼喉",
+            "绑架",
+            "折磨",
+            "虐杀",
+            "施暴",
+            "威吓",
+            "行刑",
+            "处决",
+            "爆头",
+            "肢解",
+            "斩首",
+            "活埋",
             "追杀",
             "杀掉",
             "弄死",
@@ -147,6 +268,11 @@ DEFAULT_RULES = [
             "真实人物肖像",
             "本人照片",
             "真人患者形象",
+            "身份证照片",
+            "护照照片",
+            "医生照片",
+            "家属照片",
+            "指定人物照片",
         ],
         "patient_message_type": "identity",
     },
@@ -154,7 +280,17 @@ DEFAULT_RULES = [
         "rule_code": "R-006",
         "category": "人种刻板化或歧视性表达",
         "rule_type": RiskRuleType.CONTEXT,
-        "trigger_terms": ["人种", "民族", "种族", "群体", "某族"],
+        "trigger_terms": [
+            "人种",
+            "民族",
+            "种族",
+            "群体",
+            "某族",
+            "宗教",
+            "国籍",
+            "残疾",
+            "性取向",
+        ],
         "context_terms": [
             "很脏",
             "低等",
@@ -167,6 +303,12 @@ DEFAULT_RULES = [
             "侮辱",
             "丑化",
             "仇恨",
+            "灭绝",
+            "驱逐",
+            "排斥",
+            "仇视",
+            "污名化",
+            "去人化",
         ],
         "exclusion_terms": EXCLUSIONS,
         "patient_message_type": "risk",
@@ -188,6 +330,11 @@ DEFAULT_RULES = [
             "儿童恐怖形象",
             "儿童尸体",
             "儿童患者肖像",
+            "未成年人受伤",
+            "婴儿受伤",
+            "虐童",
+            "儿童性化",
+            "未成年人色情",
         ],
         "patient_message_type": "crisis",
     },
@@ -213,6 +360,16 @@ DEFAULT_RULES = [
             "隐藏信息",
             "宇宙讯号",
             "外星控制",
+            "植入芯片",
+            "读心",
+            "思想被读取",
+            "有人操控我",
+            "政府监视",
+            "政府监视我",
+            "监视我",
+            "摄像头监控我",
+            "电视在对我说话",
+            "声音命令我",
         ],
         "context_terms": ["确认", "强化", "真实", "确实", "监视", "控制", "命令"],
         "exclusion_terms": EXCLUSIONS,
@@ -233,72 +390,149 @@ DEFAULT_RULES = [
             "单位",
             "学校",
             "社交账号",
+            "微信号",
+            "QQ号",
+            "护照号",
+            "银行卡号",
+            "信用卡号",
+            "工作单位",
+            "家庭地址",
+            "车牌号",
+            "人脸照片",
         ],
         "patient_message_type": "identity",
+    },
+    {
+        "rule_code": "R-010",
+        "category": "色情、裸露或性暴力表达",
+        "rule_type": RiskRuleType.DIRECT,
+        "trigger_terms": [
+            "色情",
+            "裸露",
+            "裸体",
+            "全裸",
+            "性行为",
+            "露骨性内容",
+            "性暗示",
+            "性骚扰",
+            "性侵",
+            "强奸",
+            "猥亵",
+        ],
+        "patient_message_type": "risk",
+    },
+    {
+        "rule_code": "R-011",
+        "category": "极端主义、仇恨或恐怖组织符号",
+        "rule_type": RiskRuleType.DIRECT,
+        "trigger_terms": [
+            "纳粹",
+            "卐字",
+            "白人至上",
+            "种族灭绝",
+            "仇恨符号",
+            "恐怖组织标志",
+            "极端组织标志",
+            "恐怖主义宣传",
+        ],
+        "patient_message_type": "risk",
     },
 ]
 
 PII_PATTERNS = (
     re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
     re.compile(r"(?<!\d)\d{17}[\dXx](?!\w)"),
+    re.compile(r"(?<!\d)\d{16,19}(?!\d)"),
     re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE),
 )
 
 ENGLISH_RISK_MARKERS: tuple[tuple[str, str], ...] = (
     (
-        r"\b(?:blood|bloody|gore|gory|bleeding|open wound|self[- ]?harm|"
-        r"self[- ]?injury|cut (?:my|their|his|her) wrists?|suicid(?:e|al))\b",
+        r"\b(?:blood|bloody|bloodied|bloodstained|blood[- ]?(?:soaked|covered|"
+        r"smeared|splattered)|blood (?:splatter|spatter|smear|droplets?)|gore|gory|"
+        r"bleeding|hemorrhag(?:e|ing)|wounds?|open wound|laceration|gash|incision|"
+        r"lick(?:ing|ed|s)? (?:the )?blood|"
+        r"mutilat(?:e|ed|ion)|severed limbs?|exposed organs?|self[- ]?harm|"
+        r"self[- ]?injury|cut (?:my|their|his|her) wrists?|"
+        r"suicid(?:e|al)|hang myself|overdose)\b",
         "流血自残",
     ),
     (
-        r"\b(?:knife|dagger|machete|gun|pistol|rifle|bullet|bomb|explosive|"
-        r"molotov|bat|axe|chainsaw|crossbow|poison|acid|noose)\b",
+        r"\b(?:knife|knife edge|blade|dagger|machete|sword|bayonet|razor|"
+        r"box cutter|utility knife|sharp object|gun|firearm|handgun|pistol|rifle|"
+        r"shotgun|bullet|ammunition|bomb|explosive|grenade|landmine|rocket launcher|"
+        r"molotov|baseball bat|axe|chainsaw|crossbow|poison|acid|noose)\b",
         "刀",
     ),
     (
-        r"\b(?:attack|harm|hurt|threaten|wield|aim|use|using|generate|create|"
-        r"show|depict|add|include)\b",
+        r"\b(?:attack|harm|hurt|threaten|wield|hold|holding|carry|carrying|point|"
+        r"aim|use|using|generate|create|show|depict|draw|add|include|stab|slash|"
+        r"shoot|detonate)\b",
         "生成",
     ),
-    (r"\b(?:no|not|without|avoid|exclude|do not|don't|never)\b", "不要"),
     (
-        r"\b(?:horror|horrific|terrifying|demon|ghost|zombie|monster|hell|"
-        r"curse|skull|faceless)\b",
+        r"\b(?:no|not|without|avoid|exclude|omit|remove|delete|do not|don't|never|"
+        r"free of)\b",
+        "不要",
+    ),
+    (
+        r"\b(?:horror|horrific|terrifying|creepy|disturbing|demon|ghost|zombie|"
+        r"monster|hell|curse|skull|faceless|rotting face|empty eye sockets|"
+        r"twisted limbs)\b",
         "恐怖",
     ),
     (r"\b(?:image|appearance|scene|visual|turn (?:him|her|them|it) into)\b", "形象"),
     (
-        r"\b(?:threat|threaten|attack|assault|choke|stab|shoot|kill|murder|"
-        r"violent rage|aggressive pose)\b",
+        r"\b(?:threat|threaten|attack|assault|choke|strangle|stab|shoot|kill|"
+        r"murder|torture|execute|execution|kidnap|abduct|behead|decapitate|"
+        r"dismember|bury alive|violent rage|aggressive pose)\b",
         "威胁",
     ),
     (
         r"\b(?:real patient|patient photo|patient portrait|medical photo|"
-        r"celebrity face|politician face|face swap|real person portrait)\b",
+        r"celebrity face|politician face|face swap|real person portrait|"
+        r"passport photo|identity card photo|doctor photo|family member photo)\b",
         "真实患者肖像",
     ),
-    (r"\b(?:race|racial|ethnicity|ethnic group)\b", "人种"),
+    (
+        r"\b(?:race|racial|ethnicity|ethnic group|religion|religious group|"
+        r"nationality|disability|sexual orientation)\b",
+        "人种",
+    ),
     (
         r"\b(?:inferior|dirty race|subhuman|racial cleansing|racial insult|"
-        r"racial hatred)\b",
+        r"racial hatred|exterminate|deport|dehumanize|hate group)\b",
         "歧视",
     ),
     (
         r"\b(?:child|kid|minor)\b.*\b(?:hurt|injur(?:e|ed|y)|bleed|self[- ]?harm|"
-        r"suicid(?:e|al)|abuse|corpse)\b",
+        r"suicid(?:e|al)|abuse|corpse|sexualize|sexual content)\b",
         "儿童受伤",
     ),
     (
         r"\b(?:being monitored|being followed|being listened to|mind control|"
         r"secret organization|chosen one|divine message|possessed|hidden message|"
-        r"alien control)\b",
+        r"alien control|implanted chip|reading my mind|government surveillance|"
+        r"camera is watching me|television is talking to me|voices command me)\b",
         "被监控",
     ),
     (r"\b(?:confirm|prove|real|really|indeed|definitely true)\b", "确认"),
     (
-        r"\b(?:phone number|identity card|id number|email address|home address|"
-        r"full name|contact details|medical record number|social media handle)\b",
+        r"\b(?:phone number|identity card|id number|passport number|bank card|"
+        r"credit card|email address|home address|full name|contact details|"
+        r"medical record number|social media handle|wechat id|qq number|"
+        r"license plate|employer|workplace)\b",
         "姓名",
+    ),
+    (
+        r"\b(?:porn|pornographic|explicit sexual content|nudity|nude|naked|"
+        r"sexual act|sexualized|sexual harassment|sexual assault|rape|molest)\b",
+        "色情",
+    ),
+    (
+        r"\b(?:nazi|swastika|white supremacy|white supremacist|genocide|"
+        r"hate symbol|terrorist propaganda|extremist organization)\b",
+        "纳粹",
     ),
 )
 
@@ -327,14 +561,33 @@ def normalize_for_risk(text: str) -> str:
     markers = "".join(
         marker for pattern, marker in ENGLISH_RISK_MARKERS if re.search(pattern, normalized)
     )
-    return re.sub(r"\s+", "", f"{normalized}{markers}")
+    return re.sub(r"[\W_]+", "", f"{normalized}{markers}", flags=re.UNICODE)
 
 
 async def seed_default_risk_rules(session: AsyncSession) -> None:
-    existing = set((await session.scalars(select(RiskRule.rule_code))).all())
+    existing = {
+        rule.rule_code: rule
+        for rule in (await session.scalars(select(RiskRule))).all()
+    }
     now = utc_now()
     for definition in DEFAULT_RULES:
-        if definition["rule_code"] in existing:
+        rule = existing.get(definition["rule_code"])
+        if rule is not None:
+            changed = False
+            for field in ("trigger_terms", "context_terms", "exclusion_terms"):
+                required = definition.get(field)
+                if not required:
+                    continue
+                current = list(getattr(rule, field) or [])
+                merged = list(dict.fromkeys([*current, *required]))
+                if merged != current:
+                    setattr(rule, field, merged)
+                    changed = True
+            if rule.version in LEGACY_DEFAULT_RULE_VERSIONS:
+                rule.version = RISK_RULE_VERSION
+                changed = True
+            if changed:
+                rule.updated_at = now
             continue
         session.add(
             RiskRule(

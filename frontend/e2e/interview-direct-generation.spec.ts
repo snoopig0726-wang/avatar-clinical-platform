@@ -12,7 +12,7 @@ const visualValues = {
   background: '浅暖灰背景',
 }
 
-test('confirmed visual features can start the first image from the interview page', async ({
+test('a new session can generate from its new visual features despite an older case image', async ({
   page,
 }) => {
   let generationRequests = 0
@@ -74,7 +74,32 @@ test('confirmed visual features can start the first image from the interview pag
     }
 
     if (path.endsWith('/cases/case-1/avatar-versions')) {
-      await route.fulfill({ json: { items: [] } })
+      await route.fulfill({
+        json: {
+          items: [{
+            version_id: 'version-old',
+            case_id: 'case-1',
+            source_visual_feature_id: 'visual-old',
+            generation_round: 1,
+            generation_mode: 'initial',
+            generation_status: 'approved',
+            safety_status: 'passed',
+            doctor_review_status: 'approved',
+            provider_kind: 'openai',
+            provider_model: 'gpt-image-2',
+            prompt_template_version: 'test',
+            image_url: '/old.png',
+            failure_code: null,
+            is_current_candidate: false,
+            is_authorized: true,
+            snapshot_available: true,
+            doctor_reviewed_at: '2026-07-28T00:00:00Z',
+            source_adjustment_request_id: null,
+            created_at: '2026-07-28T00:00:00Z',
+            completed_at: '2026-07-28T00:00:00Z',
+          }],
+        },
+      })
       return
     }
 
@@ -112,6 +137,7 @@ test('confirmed visual features can start the first image from the interview pag
         json: {
           version_id: 'version-1',
           case_id: 'case-1',
+          source_visual_feature_id: 'visual-1',
           generation_round: 1,
           generation_mode: 'initial',
           generation_status: 'queued',
@@ -143,7 +169,7 @@ test('confirmed visual features can start the first image from the interview pag
           status: 'active',
           stage: 'interview',
           assessment_mode: 'new_assessment',
-          has_prior_assessment: false,
+          has_prior_assessment: true,
           current_authorized_version_id: null,
           patient_satisfied_version_id: null,
           patient_satisfied_at: null,

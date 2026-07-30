@@ -22,6 +22,7 @@ class CancelAvatarGenerationRequest(BaseModel):
 class AvatarVersionResponse(BaseModel):
     version_id: UUID
     case_id: UUID
+    source_visual_feature_id: UUID | None = None
     generation_round: int
     generation_mode: GenerationMode
     generation_status: GenerationStatus

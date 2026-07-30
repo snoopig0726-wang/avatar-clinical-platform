@@ -58,9 +58,7 @@ export function LandingPage() {
 
       <main>
         <section className="hero-section">
-          <div className="hero-glow hero-glow--one" />
-          <div className="hero-glow hero-glow--two" />
-          <div className="container hero-grid hero-grid--immersive">
+          <div className="container hero-grid hero-grid--split">
             <div className="hero-copy">
               <div className="research-badge">
                 <span className="research-badge__dot" />

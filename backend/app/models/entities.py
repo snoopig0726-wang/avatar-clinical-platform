@@ -339,6 +339,7 @@ class AdjustmentRequest(Base):
     doctor_status: Mapped[AdjustmentStatus] = mapped_column(
         enum_column(AdjustmentStatus, "adjustment_status_enum"), nullable=False
     )
+    clinician_edited_text_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     reviewed_instruction_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     rejection_reason_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

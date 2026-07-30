@@ -389,6 +389,24 @@ a {
   gap: 48px;
 }
 
+.hero-grid--split {
+  grid-template-columns: minmax(0, 0.92fr) minmax(460px, 1.08fr);
+  gap: clamp(48px, 6vw, 92px);
+}
+
+.hero-grid--split .hero-copy {
+  max-width: 690px;
+}
+
+.hero-grid--split .hero-copy h1 {
+  font-size: clamp(48px, 4vw, 64px);
+}
+
+.hero-grid--split .hero-visual.hero-photo {
+  width: 100%;
+  border-radius: 24px;
+}
+
 .hero-grid--immersive {
   isolation: isolate;
   display: block;
@@ -2420,6 +2438,36 @@ a {
   border-radius: 0 10px 10px 0;
   background: #f1f6f4;
   line-height: 1.65;
+}
+
+.doctor-adjustment-modal__editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  color: #34554b;
+}
+
+.doctor-adjustment-modal__editor .ant-btn {
+  justify-self: start;
+}
+
+.doctor-adjustment-modal__preview {
+  margin-top: 18px;
+}
+
+.doctor-adjustment-list__clinician-edit {
+  display: grid;
+  gap: 4px;
+  margin: -2px 0 16px;
+  padding: 11px 14px;
+  border: 1px solid #d7e4df;
+  border-radius: 10px;
+  color: #41695d;
+  background: #f8fbfa;
+}
+
+.doctor-adjustment-list__clinician-edit strong {
+  font-size: 14px;
 }
 
 .doctor-adjustment-options {

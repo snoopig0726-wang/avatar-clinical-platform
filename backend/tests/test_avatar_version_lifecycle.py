@@ -96,6 +96,7 @@ async def test_review_authorize_rollback_snapshots_and_download(tmp_path) -> Non
             )
             assert generated.status_code == 202
             generated_id = generated.json()["version_id"]
+            assert generated.json()["source_visual_feature_id"] is not None
             assert generated.json()["generation_status"] == "pending_doctor_review"
             assert generated.json()["snapshot_available"] is True
 

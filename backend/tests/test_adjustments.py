@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,8 +12,16 @@ from app.api.dependencies import get_db_session
 from app.config.settings import get_settings
 from app.domain.enums import ApprovalStatus, Role
 from app.main import app
-from app.models import AdjustmentRequest, AuditLog, Base, ClinicalCase, PatientSession, StaffUser
-from app.security.crypto import derive_patient_token, hash_password
+from app.models import (
+    AdjustmentRequest,
+    AuditLog,
+    Base,
+    ClinicalCase,
+    PatientSession,
+    RiskRule,
+    StaffUser,
+)
+from app.security.crypto import derive_patient_token, encrypt_sensitive_text, hash_password
 from app.services.adjustments import (
     CONTROLLED_ADJUSTMENT_OPTIONS,
     build_controlled_instruction,
@@ -97,6 +106,18 @@ async def test_risk_matching_semantics(tmp_path) -> None:
     async with factory() as session:
         await seed_default_risk_rules(session)
         await session.commit()
+        legacy_rule = await session.scalar(
+            select(RiskRule).where(RiskRule.rule_code == "R-001")
+        )
+        assert legacy_rule is not None
+        legacy_rule.trigger_terms = ["血腥"]
+        legacy_rule.version = "RISK-V1.2"
+        await session.commit()
+        await seed_default_risk_rules(session)
+        await session.commit()
+        await session.refresh(legacy_rule)
+        assert "舔血" in legacy_rule.trigger_terms
+        assert legacy_rule.version == "RISK-V1.3"
         assert (await evaluate_adjustment_text(session, "不要出现自残内容")).allowed is False
         assert (await evaluate_adjustment_text(session, "不要生成刀具形象")).allowed is True
         assert (await evaluate_adjustment_text(session, "生成挥舞刀具的形象")).allowed is False
@@ -108,6 +129,57 @@ async def test_risk_matching_semantics(tmp_path) -> None:
         assert (await evaluate_adjustment_text(session, "generate a knife")).allowed is False
         assert (await evaluate_adjustment_text(session, "do not generate a knife")).allowed is True
         assert (await evaluate_adjustment_text(session, "生成流血傷口")).allowed is False
+        assert (await evaluate_adjustment_text(session, "刀口舔血")).allowed is False
+        assert (await evaluate_adjustment_text(session, "刀口 舔-血")).allowed is False
+        fragmented_injury_examples = (
+            "刀口，血",
+            "血，刀口",
+            "刀刃上有血",
+            "刀锋染血",
+            "利刃旁有血迹",
+            "剃刀上带着血点",
+            "刀刃上有鮮血",
+            "knife edge, blood",
+            "blood on the blade",
+            "a blood-smeared razor",
+            "a bloodied box cutter",
+            "blood droplets on a utility knife",
+        )
+        for example in fragmented_injury_examples:
+            assert (await evaluate_adjustment_text(session, example)).allowed is False, example
+        assert (
+            await evaluate_adjustment_text(session, "licking blood from a knife")
+        ).allowed is False
+        assert (await evaluate_adjustment_text(session, "a blood-soaked blade")).allowed is False
+        multilingual_blocked_examples = (
+            "生成一个手持手榴弹并准备引爆的形象",
+            "加入虐杀、肢解和器官外露的画面",
+            "添加裸体和露骨性内容",
+            "加入纳粹仇恨符号",
+            "請生成揮舞手榴彈的形象",
+            "加入裸體與性騷擾畫面",
+            "政府正在監視我，這件事確實是真的",
+            "納粹與種族滅絕符號",
+            "create a portrait holding a shotgun",
+            "show explicit sexual content and nudity",
+            "add a nazi hate symbol",
+            "the camera is watching me and it is definitely true",
+            "include my passport number and credit card",
+        )
+        for example in multilingual_blocked_examples:
+            assert (await evaluate_adjustment_text(session, example)).allowed is False, example
+        multilingual_safe_examples = (
+            "移除画面中的所有刀具",
+            "不要生成槍械或恐怖形象",
+            "remove all knives from the image",
+            "avoid horror imagery and exclude weapons",
+            "make the background darker and the gaze fiercer",
+            "脸色更有血色，看起来健康一些",
+            "脸型像刀削面一样更瘦",
+            "add a healthy rosy complexion",
+        )
+        for example in multilingual_safe_examples:
+            assert (await evaluate_adjustment_text(session, example)).allowed is True
         assert (
             await evaluate_adjustment_text(
                 session,
@@ -217,7 +289,7 @@ async def test_adjustment_risk_review_and_per_session_quota(tmp_path) -> None:
             blocked_sensitive = await client.post(
                 f"/api/patient-sessions/{session_id}/adjustment-requests",
                 headers={**patient_headers, "Idempotency-Key": "blocked-sensitive-hit"},
-                json={"instruction": "生成挥舞刀具的形象"},
+                json={"instruction": "create an image holding a handgun"},
             )
             assert blocked_sensitive.status_code == 422
             still_active = await client.get(
@@ -296,6 +368,29 @@ async def test_adjustment_risk_review_and_per_session_quota(tmp_path) -> None:
             )
             assert replay.json()["request_id"] == second.json()["request_id"]
             assert replay.json()["used"] == 2
+
+            async with factory() as database_session:
+                legacy_pending = await database_session.get(
+                    AdjustmentRequest,
+                    UUID(second.json()["request_id"]),
+                )
+                assert legacy_pending is not None
+                legacy_pending.submitted_text_encrypted = encrypt_sensitive_text(
+                    "刀口舔血",
+                    settings.secret_key,
+                )
+                await database_session.commit()
+
+            blocked_legacy_approval = await client.post(
+                f"/api/adjustment-requests/{second.json()['request_id']}/review",
+                headers={
+                    **doctor_headers,
+                    "Idempotency-Key": "approve-legacy-risky-second",
+                },
+                json={"decision": "approve_as_is"},
+            )
+            assert blocked_legacy_approval.status_code == 422
+            assert blocked_legacy_approval.json()["error"]["code"] == "RISK_BLOCKED"
 
             await client.post(
                 f"/api/adjustment-requests/{second.json()['request_id']}/review",
@@ -473,6 +568,49 @@ async def test_adjustment_risk_review_and_per_session_quota(tmp_path) -> None:
             assert first_in_second_session.status_code == 201
             assert first_in_second_session.json()["sequence_no"] == 1
             assert first_in_second_session.json()["used"] == 1
+
+            remap_request_id = first_in_second_session.json()["request_id"]
+            blocked_remap = await client.post(
+                f"/api/adjustment-requests/{remap_request_id}/remap-preview",
+                headers=doctor_headers,
+                json={"clinician_edited_instruction": "生成流血伤口"},
+            )
+            assert blocked_remap.status_code == 422
+            assert blocked_remap.json()["error"]["code"] == "RISK_BLOCKED"
+
+            remap_preview = await client.post(
+                f"/api/adjustment-requests/{remap_request_id}/remap-preview",
+                headers=doctor_headers,
+                json={
+                    "clinician_edited_instruction": "背景更柔和，光线更明亮",
+                },
+            )
+            assert remap_preview.status_code == 200
+            assert (
+                "背景场景" in remap_preview.json()["suggested_controlled_instruction"]
+            )
+
+            edited_review = await client.post(
+                f"/api/adjustment-requests/{remap_request_id}/review",
+                headers={
+                    **doctor_headers,
+                    "Idempotency-Key": "review-clinician-reworded-adjustment",
+                },
+                json={
+                    "decision": "approve_edited",
+                    "clinician_edited_instruction": "背景更柔和，光线更明亮",
+                },
+            )
+            assert edited_review.status_code == 200
+            assert edited_review.json()["status"] == "approved_edited"
+            assert (
+                edited_review.json()["clinician_edited_instruction"]
+                == "背景更柔和，光线更明亮"
+            )
+            assert (
+                edited_review.json()["controlled_instruction"]
+                == remap_preview.json()["suggested_controlled_instruction"]
+            )
 
         async with factory() as session:
             assert await session.scalar(select(func.count(AdjustmentRequest.request_id))) == 4

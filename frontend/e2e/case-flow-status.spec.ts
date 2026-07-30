@@ -206,6 +206,7 @@ function adjustmentList(scenario: Scenario) {
               scenario.adjustmentStatus === 'applied'
                 ? ageControlledInstruction
                 : null,
+            clinician_edited_instruction: null,
             suggested_controlled_instruction: ageControlledInstruction,
             controlled_options: [
               ageControlledInstruction,
@@ -291,6 +292,17 @@ async function mockScenario(page: Page, scenario: Scenario) {
       body = patientSession(scenario)
     } else if (path === `/api/cases/${caseId}/adjustment-requests`) {
       body = adjustmentList(scenario)
+    } else if (
+      path === `/api/adjustment-requests/flow-adjustment/remap-preview`
+    ) {
+      const payload = route.request().postDataJSON() as {
+        clinician_edited_instruction: string
+      }
+      body = {
+        clinician_edited_instruction: payload.clinician_edited_instruction,
+        suggested_controlled_instruction: ageControlledInstruction,
+        controlled_options: [ageControlledInstruction],
+      }
     } else if (path === `/api/cases/${caseId}/avatar-versions`) {
       body = versionList(scenario)
     } else if (path === `/api/cases/${caseId}/visual-features`) {
@@ -406,16 +418,26 @@ test('controlled instructions follow the selected interface language', async ({
   ).toBeVisible()
 
   await page.getByRole('button', { name: 'Clinician adjustment' }).click()
+  const englishEditor = page.getByRole('textbox', {
+    name: "Clinician's revised description",
+  })
+  await expect(englishEditor).toHaveValue('Make the background slightly darker')
+  await englishEditor.fill('older, with a fiercer gaze')
+  await page.getByRole('button', { name: 'Remap controlled instruction' }).click()
   await expect(
-    page.getByRole('radio', {
-      name: 'Adjust eye color, size, shape, eyebrow shape, and gaze direction',
-    }),
+    page.getByRole('dialog').getByText(
+      'Moderately increase apparent age through facial contours, hair color, and natural age features',
+      { exact: true },
+    ),
   ).toBeVisible()
 
   await page.getByRole('button', { name: 'Cancel' }).click()
   await page.getByRole('button', { name: '简体中文' }).click()
   await page.getByRole('button', { name: '医生调整' }).click()
+  const chineseEditor = page.getByRole('textbox', { name: '医生调整后的描述' })
+  await chineseEditor.fill('年龄更大')
+  await page.getByRole('button', { name: '重新映射受控指令' }).click()
   await expect(
-    page.getByRole('radio', { name: gazeControlledInstruction }),
+    page.getByRole('dialog').getByText(ageControlledInstruction, { exact: true }),
   ).toBeVisible()
 })

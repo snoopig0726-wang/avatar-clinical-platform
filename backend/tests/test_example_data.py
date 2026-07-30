@@ -38,7 +38,7 @@ async def test_example_dataset_is_idempotent_and_covers_key_states(tmp_path) -> 
             await session.scalar(select(func.count(SessionAvatarAuthorization.authorization_id)))
             == 1
         )
-        assert await session.scalar(select(func.count(RiskRule.rule_id))) == 9
+        assert await session.scalar(select(func.count(RiskRule.rule_id))) == 11
         assert await session.scalar(select(func.count(AdjustmentRequest.request_id))) == 1
         codes = set((await session.scalars(select(ClinicalCase.study_code))).all())
         assert codes == {"DEMO-VOICE-001", "DEMO-VOICE-002", "DEMO-VOICE-003"}

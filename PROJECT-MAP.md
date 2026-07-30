@@ -1,114 +1,146 @@
-# 目标 V1 工程地图
+# Avatar 当前工程地图
 
-- 所属产品：幻听患者个性化 Avatar 生成系统
-- 关联 PRD：https://ycnhe29l1vtr.feishu.cn/docx/JAY0d7gkgoVAAjxa8vVcoQK1nKc
-- 文档版本：V1.0
-- 文档状态：Draft
-- 来源：PRD V3.0 审查修订
+- 文档版本：V1.2
+- 当前状态：与 2026-07-30 项目目录同步
 
-## 1. 使用范围
-
-本文件只描述目标 V1 工程结构，不描述当前单机 Demo 的 `app/`、SQLite 或本地 SVG 实现。目标 V1 采用前后端分离、PostgreSQL、Redis、Celery、S3 兼容对象存储和模型适配器架构。
-
-## 2. 目标目录树
+## 1. 根目录
 
 ```text
-avatar-v1/
-├── frontend/
-│   ├── src/
-│   │   ├── app/                 # 路由、全局状态、权限守卫
-│   │   ├── pages/
-│   │   │   ├── doctor/          # 医生工作台、病例、生成、版本和审核
-│   │   │   ├── patient/         # 患者邀请码和受监督会话
-│   │   │   └── admin/           # 管理员账户、规则、统计和审计
-│   │   ├── components/          # 复用 UI 组件和状态组件
-│   │   ├── services/            # API client、轮询和任务状态订阅
-│   │   ├── types/               # 前端 DTO 和状态类型
-│   │   └── styles/              # 主题、可访问性和布局样式
-│   ├── public/
-│   └── package.json
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI 应用入口
-│   │   ├── api/                 # 路由、依赖和请求响应模型
-│   │   │   ├── auth.py
-│   │   │   ├── cases.py
-│   │   │   ├── sessions.py
-│   │   │   ├── avatars.py
-│   │   │   ├── adjustments.py
-│   │   │   └── admin.py
-│   │   ├── domain/              # 领域状态、权限和业务规则
-│   │   ├── services/            # 病例、会话、版本、风险和下载服务
-│   │   ├── workers/             # Celery 任务和重试策略
-│   │   ├── adapters/            # 外部服务适配器
-│   │   │   ├── feature_mapping/
-│   │   │   ├── image_generation/
-│   │   │   ├── image_safety/
-│   │   │   └── storage/
-│   │   ├── models/              # SQLAlchemy 数据模型
-│   │   ├── schemas/             # Pydantic DTO 和校验
-│   │   ├── repositories/        # 数据库访问和事务边界
-│   │   ├── security/            # JWT、会话、设备绑定和密钥读取
-│   │   ├── config/              # 环境配置和 feature flags
-│   │   └── observability/       # 日志、指标、追踪和告警
-│   ├── migrations/              # Alembic 迁移
-│   └── pyproject.toml
-├── tests/
-│   ├── unit/                    # 领域规则、映射和适配器单测
-│   ├── integration/             # 数据库、Redis、对象存储和 Worker 集成测试
-│   ├── api/                     # API 权限、状态和幂等测试
-│   └── e2e/                     # 医生/患者/管理员关键流程测试
-├── infra/
-│   ├── docker/                  # Dockerfile 和 Compose 配置
-│   ├── nginx/                   # 网关和 TLS 配置
-│   └── deploy/                  # 测试/生产部署清单
-├── docs/                        # 设计、运行手册和决策记录
-├── .env.example                 # 非敏感配置模板
-├── docker-compose.yml           # 本地和测试依赖编排
+Avatar/
+├── frontend/                 React 三角色前端
+├── backend/                  FastAPI 后端、迁移、脚本和测试
+├── infra/                    Docker、Nginx 和临时隧道脚本
+├── docs/                     产品、架构、安全、AI 与质量文档
+├── .github/workflows/        CI
+├── .env.example              非敏感配置模板
+├── docker-compose.yml        Compose 编排
+├── netlify.toml              Netlify 前端部署配置
 ├── PROJECT-MAP.md
 └── README.md
 ```
 
-## 3. 模块职责地图
-
-| 需求 | 主要位置 | 不应直接修改 |
-|-|-|-|
-| 医生病例和邀请码 | `backend/app/api/cases.py`、`sessions.py`、`services/` | 模型适配器、前端页面中的权限判断 |
-| 患者会话状态和安全暂停 | `sessions.py`、`domain/`、`frontend/src/pages/patient/` | 数据库表外直接存状态 |
-| Avatar 版本、审核和回退 | `avatars.py`、版本服务、`frontend/src/pages/doctor/` | 供应商 SDK |
-| 患者调整次数和审核 | `adjustments.py`、风险服务、调整页面 | 患者端直接调用模型 |
-| 模型接入 | `backend/app/adapters/`、`workers/` | 业务路由中硬编码供应商请求 |
-| 风险规则和图片安全 | `domain/`、`services/`、`adapters/image_safety/` | 前端单独决定是否放行 |
-| 数据表和迁移 | `models/`、`repositories/`、`migrations/` | 运行时自动改表 |
-| 监控和审计 | `observability/`、`audit` 服务 | 记录患者原文、Prompt 或图片内容 |
-| 30 天删除 | `workers/`、留存服务、`storage/` | 只删除数据库而不删除对象存储和备份 |
-
-## 4. 入口与运行命令
-
-目标 V1 的入口和命令约定如下：
+## 2. 前端
 
 ```text
-本地 API：       backend/app/main.py
-前端开发：       frontend/ 开发服务器
-异步 Worker：    backend/app/workers/
-数据库迁移：     backend/migrations/（Alembic）
-本地依赖：       docker-compose.yml
+frontend/
+├── src/
+│   ├── app/                  路由和应用入口
+│   ├── components/           复用 UI、品牌、语言和状态组件
+│   ├── i18n/                 English、简体中文、繁體中文文案
+│   ├── lib/                  API 客户端与前端工具
+│   ├── pages/                当前页面组件
+│   │   ├── LandingPage.tsx
+│   │   ├── DoctorApplicationPage.tsx
+│   │   ├── DoctorLoginPage.tsx
+│   │   ├── DoctorWorkspacePage.tsx
+│   │   ├── DoctorCasePage.tsx
+│   │   ├── DoctorInterviewPage.tsx
+│   │   ├── PatientInvitePage.tsx
+│   │   ├── PatientWaitingPage.tsx
+│   │   ├── AdminLoginPage.tsx
+│   │   └── AdminDashboardPage.tsx
+│   └── styles/               设计令牌、布局和响应式样式
+├── public/                   品牌和登录/首页图片资源
+├── e2e/                      Playwright 业务与布局测试
+├── package.json
+└── vite.config.ts
 ```
 
-开发、测试和部署命令应由根目录 `README.md` 统一维护，至少包含：安装依赖、启动本地依赖、启动 API、启动 Worker、执行迁移、运行单元/集成/E2E 测试和查看健康检查。
+前端负责页面呈现、输入交互、短轮询和权限路由，不负责：
 
-## 5. 配置和密钥边界
+- 保存 OpenAI API Key；
+- 判定患者文本风险；
+- 直接调用 GPT Image 2；
+- 决定患者是否可以查看未授权图像。
 
-- `.env.example` 只包含变量名和安全示例值；
-- 真实 API Key、数据库密码、S3 密钥和 JWT 密钥只进入密钥管理服务或部署环境；
-- 浏览器只获得业务 API 凭证，不获得模型或对象存储长期密钥；
-- Provider、模型名称、超时、重试和留存天数均通过服务端配置注入。
+## 3. 后端
 
-## 6. 文档关系
+```text
+backend/
+├── app/
+│   ├── main.py               FastAPI 入口
+│   ├── api/
+│   │   ├── router.py         总路由
+│   │   └── routes/           auth、cases、sessions、features、
+│   │                         avatars、adjustments、admin 等
+│   ├── adapters/
+│   │   ├── feature_mapping/  确定性映射与 Prompt Builder
+│   │   ├── image_generation/ GPT Image 2 Provider
+│   │   └── storage/          本地与 S3 存储
+│   ├── config/               环境配置
+│   ├── domain/               状态枚举和领域规则
+│   ├── models/               SQLAlchemy 实体
+│   ├── observability/        日志与审计辅助
+│   ├── repositories/         数据访问
+│   ├── schemas/              Pydantic 请求响应契约
+│   ├── security/             认证、哈希、加密和限流
+│   ├── services/             业务服务、风险和生成编排
+│   └── workers/              Celery 生成和留存任务
+├── migrations/               Alembic
+├── scripts/                  示例数据与线上验收脚本
+├── tests/                    Pytest
+└── pyproject.toml
+```
 
-- `TECH.md`：整体架构、技术栈、部署、任务和模型适配原则；
-- `DATA.md`：数据库实体、版本、权限、留存和删除字段；
-- `API.md`：外部 API 路径、权限、错误和幂等契约；
-- `AI-SAFETY.md`：V1 表单映射、禁止元素和安全门禁；
-- `TEST.md`：角色、会话、调整、版本、删除和安全测试矩阵；
-- `PROJECT-MAP.md`：本文件，负责目标 V1 代码目录和模块定位。
+## 4. 需求定位
+
+| 需求 | 主要位置 |
+|---|---|
+| 医生申请、登录和管理员审批 | `backend/app/api/routes/auth.py`、`admin.py`、前端登录/管理员页 |
+| 病例与归档 | `backend/app/api/routes/cases.py` |
+| 邀请码和患者会话 | `invites.py`、`sessions.py` |
+| Q1–Q8 | `features.py`、`backend/app/services/features.py` |
+| 确定性视觉映射 | `backend/app/adapters/feature_mapping/deterministic_mapper.py` |
+| Prompt 构建 | `backend/app/adapters/feature_mapping/prompt_builder.py` |
+| GPT Image 2 生成 | `backend/app/adapters/image_generation/`、`backend/app/services/avatar_generation.py` |
+| 图像版本、审核、授权、回退和下载 | `backend/app/api/routes/avatars.py` |
+| 患者调整和医生可选改写 | `backend/app/api/routes/adjustments.py` |
+| 多语言风险规则 | `backend/app/services/risk_engine.py`、`text_normalization.py` 与 `docs/safety/AI-SAFETY.md` |
+| 数据模型 | `backend/app/models/entities.py` |
+| 前端状态同步 | `frontend/src/pages/` 与 `frontend/src/lib/` |
+| 三语言文案 | `frontend/src/i18n/` |
+| 自动化测试 | `backend/tests/`、`frontend/e2e/` |
+
+## 5. 运行形态
+
+### 本地轻量开发
+
+- Vite 前端；
+- FastAPI；
+- SQLite；
+- 本地图像存储；
+- 内联生成；
+- 服务端配置 GPT Image 2 密钥。
+
+### Docker Compose
+
+- 静态前端容器；
+- FastAPI；
+- PostgreSQL；
+- Redis；
+- Celery Worker/Beat；
+- MinIO；
+- 服务端 GPT Image 2 配置。
+
+### Netlify
+
+Netlify 只构建和托管 `frontend/`。后端、数据库、Redis、对象存储、生成 Worker 和 OpenAI API Key 必须在独立环境运行。
+
+## 6. 配置与密钥边界
+
+- `.env.example` 只能保存变量名和非敏感示例；
+- OpenAI、数据库、S3 和应用密钥不能提交到 GitHub；
+- `VITE_*` 是公开前端构建变量，禁止放入任何密钥；
+- 业务生图使用 `MODEL_PROVIDER=openai`、`MODEL_NAME=gpt-image-2`；
+- 默认质量为 `MODEL_QUALITY=low`；
+- 自动化测试替身只用于测试，不能写成当前业务 Provider。
+
+## 7. 文档入口
+
+- `docs/architecture/TECH.md`：当前技术架构；
+- `docs/architecture/API.md`：当前 REST API；
+- `docs/architecture/DATA.md`：当前 ORM 数据模型；
+- `docs/safety/AI-SAFETY.md`：`RISK-V1.2`；
+- `docs/ai/voice-to-appearance-v1.md`：映射与 Prompt；
+- `docs/quality/TEST.md`：测试矩阵；
+- `docs/quality/ONLINE-ACCEPTANCE.md`：GPT Image 2 线上状态。

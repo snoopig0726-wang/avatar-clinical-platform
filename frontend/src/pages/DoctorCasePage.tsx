@@ -42,6 +42,7 @@ import { useLanguage } from '../i18n/LanguageProvider'
 import {
   ApiClientError,
   apiRequest,
+  type AdjustmentRemapPreview,
   downloadApiFile,
   type AvatarVersion,
   type AvatarVersionList,
@@ -131,7 +132,9 @@ export function DoctorCasePage() {
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [working, setWorking] = useState(false)
   const [adjustTarget, setAdjustTarget] = useState<DoctorAdjustment | null>(null)
-  const [selectedControlledInstruction, setSelectedControlledInstruction] = useState('')
+  const [doctorEditedInstruction, setDoctorEditedInstruction] = useState('')
+  const [remapPreview, setRemapPreview] = useState<AdjustmentRemapPreview | null>(null)
+  const [remapping, setRemapping] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<DoctorAdjustment | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const knownAdjustmentIds = useRef<Set<string> | null>(null)
@@ -442,7 +445,7 @@ export function DoctorCasePage() {
     target: DoctorAdjustment,
     decision: 'approve_as_is' | 'approve_edited' | 'reject',
     options?: {
-      controlledInstruction?: string
+      clinicianEditedInstruction?: string
       rejectionReason?: string
     },
   ) {
@@ -456,15 +459,16 @@ export function DoctorCasePage() {
         idempotencyKey: newIdempotencyKey('adjustment-review'),
         body: {
           decision,
-          controlled_instruction:
-            decision === 'approve_edited' ? options?.controlledInstruction : null,
+          clinician_edited_instruction:
+            decision === 'approve_edited' ? options?.clinicianEditedInstruction?.trim() : null,
           rejection_reason:
             decision === 'reject' ? options?.rejectionReason?.trim() : null,
         },
       })
       if (decision === 'approve_edited') {
         setAdjustTarget(null)
-        setSelectedControlledInstruction('')
+        setDoctorEditedInstruction('')
+        setRemapPreview(null)
       }
       if (decision === 'reject') {
         setRejectTarget(null)
@@ -478,6 +482,34 @@ export function DoctorCasePage() {
       messageApi.error(requestError instanceof Error ? requestError.message : t('审核未能保存'))
     } finally {
       setWorking(false)
+    }
+  }
+
+  async function previewAdjustmentRemap(target: DoctorAdjustment) {
+    const token = staffTokenStore.get()
+    const editedInstruction = doctorEditedInstruction.trim()
+    if (!token || editedInstruction.length < 2) return
+    setRemapping(true)
+    try {
+      const result = await apiRequest<AdjustmentRemapPreview>(
+        `/adjustment-requests/${target.request_id}/remap-preview`,
+        {
+          method: 'POST',
+          staffToken: token,
+          body: {
+            clinician_edited_instruction: editedInstruction,
+          },
+        },
+      )
+      setRemapPreview(result)
+      messageApi.success(t('已根据医生调整后的描述重新映射'))
+    } catch (requestError) {
+      setRemapPreview(null)
+      messageApi.error(
+        requestError instanceof Error ? requestError.message : t('重新映射失败'),
+      )
+    } finally {
+      setRemapping(false)
     }
   }
 
@@ -1343,6 +1375,12 @@ export function DoctorCasePage() {
                         </Tag>
                       </div>
                       <blockquote>{item.instruction}</blockquote>
+                      {item.clinician_edited_instruction && (
+                        <div className="doctor-adjustment-list__clinician-edit">
+                          <strong>{t('医生调整后的描述')}</strong>
+                          <span>{item.clinician_edited_instruction}</span>
+                        </div>
+                      )}
                       {item.controlled_instruction && (
                         <div className="controlled-instruction">
                           <SafetyCertificateOutlined /> {t('受控指令：')}
@@ -1386,9 +1424,8 @@ export function DoctorCasePage() {
                             loading={working}
                             onClick={() => {
                               setAdjustTarget(item)
-                              setSelectedControlledInstruction(
-                                item.suggested_controlled_instruction,
-                              )
+                              setDoctorEditedInstruction(item.instruction)
+                              setRemapPreview(null)
                             }}
                           >
                             {t('医生调整')}
@@ -1489,17 +1526,24 @@ export function DoctorCasePage() {
         okText={t('确认调整并接受')}
         cancelText={t('取消')}
         okButtonProps={{
-          disabled: !selectedControlledInstruction,
+          disabled:
+            !remapPreview
+            || remapPreview.clinician_edited_instruction !== doctorEditedInstruction.trim(),
           loading: working,
         }}
         onCancel={() => {
           setAdjustTarget(null)
-          setSelectedControlledInstruction('')
+          setDoctorEditedInstruction('')
+          setRemapPreview(null)
         }}
         onOk={() => {
-          if (adjustTarget && selectedControlledInstruction) {
+          if (
+            adjustTarget
+            && remapPreview
+            && remapPreview.clinician_edited_instruction === doctorEditedInstruction.trim()
+          ) {
             void reviewAdjustment(adjustTarget, 'approve_edited', {
-              controlledInstruction: selectedControlledInstruction,
+              clinicianEditedInstruction: doctorEditedInstruction,
             })
           }
         }}
@@ -1507,24 +1551,51 @@ export function DoctorCasePage() {
         <Alert
           type="info"
           showIcon
-          message={t('保留患者原话，由医生选择更准确的受控表达')}
-          description={t('患者原始描述不会被覆盖；后续生图只使用医生确认后的低刺激受控指令。')}
+          message={t('医生调整是可选操作')}
+          description={t('仅在患者描述口语化或不够准确时进行改写。患者原话会保留，系统将根据医生改写后的描述重新映射受控指令。')}
         />
         <div className="doctor-adjustment-modal__original">
           <strong>{t('患者原始描述')}</strong>
           <blockquote>{adjustTarget?.instruction}</blockquote>
         </div>
-        <Radio.Group
-          className="doctor-adjustment-options"
-          value={selectedControlledInstruction}
-          onChange={(event) => setSelectedControlledInstruction(event.target.value)}
-        >
-          {adjustTarget?.controlled_options.map((option) => (
-            <Radio key={option} value={option}>
-              {localizeControlledInstruction(option, t, language)}
-            </Radio>
-          ))}
-        </Radio.Group>
+        <div className="doctor-adjustment-modal__editor">
+          <strong>{t('医生调整后的描述')}</strong>
+          <Input.TextArea
+            aria-label={t('医生调整后的描述')}
+            value={doctorEditedInstruction}
+            onChange={(event) => {
+              setDoctorEditedInstruction(event.target.value)
+              setRemapPreview(null)
+            }}
+            placeholder={t('请在不改变患者核心感受的前提下，将口语化描述改写得更准确。')}
+            autoSize={{ minRows: 4, maxRows: 7 }}
+            maxLength={300}
+            showCount
+          />
+          <Button
+            icon={<ReloadOutlined />}
+            loading={remapping}
+            disabled={doctorEditedInstruction.trim().length < 2}
+            onClick={() => {
+              if (adjustTarget) void previewAdjustmentRemap(adjustTarget)
+            }}
+          >
+            {t('重新映射受控指令')}
+          </Button>
+        </div>
+        {remapPreview && (
+          <Alert
+            className="doctor-adjustment-modal__preview"
+            type="success"
+            showIcon
+            message={t('重新映射后的受控指令')}
+            description={localizeControlledInstruction(
+              remapPreview.suggested_controlled_instruction,
+              t,
+              language,
+            )}
+          />
+        )}
       </Modal>
 
       <Modal

@@ -33,11 +33,13 @@ from app.models.entities import (
     SessionInvite,
 )
 from app.schemas.adjustments import (
+    AdjustmentRemapResponse,
     DoctorAdjustmentListResponse,
     DoctorAdjustmentResponse,
     PatientAdjustmentListResponse,
     PatientAdjustmentResponse,
     PatientAvatarResponse,
+    RemapAdjustmentRequest,
     ReviewAdjustmentRequest,
     SubmitAdjustmentRequest,
     SubmitAdjustmentResponse,
@@ -112,9 +114,18 @@ def doctor_adjustment_response(request: AdjustmentRequest) -> DoctorAdjustmentRe
         if request.reviewed_instruction_encrypted
         else None
     )
+    clinician_edited_instruction = (
+        decrypt_sensitive_text(
+            request.clinician_edited_text_encrypted,
+            settings.secret_key,
+        )
+        if request.clinician_edited_text_encrypted
+        else None
+    )
     return DoctorAdjustmentResponse(
         **patient_adjustment_response(request).model_dump(),
         controlled_instruction=controlled,
+        clinician_edited_instruction=clinician_edited_instruction,
         suggested_controlled_instruction=build_controlled_instruction(instruction),
         controlled_options=build_controlled_options(instruction),
     )
@@ -351,6 +362,43 @@ async def list_doctor_adjustments(
 
 
 @router.post(
+    "/adjustment-requests/{request_id}/remap-preview",
+    response_model=AdjustmentRemapResponse,
+)
+async def preview_adjustment_remap(
+    request_id: UUID,
+    payload: RemapAdjustmentRequest,
+    staff: AuthenticatedStaff = Depends(require_doctor),
+    session: AsyncSession = Depends(get_db_session),
+) -> AdjustmentRemapResponse:
+    request = await session.get(AdjustmentRequest, request_id)
+    if request is None:
+        raise ApiError(404, "RESOURCE_NOT_FOUND", "调整请求不存在或无权访问")
+    await owned_case_or_404(session, request.case_id, staff.user.user_id)
+    if request.doctor_status != AdjustmentStatus.PENDING_DOCTOR_REVIEW:
+        raise ApiError(409, "STATE_CONFLICT", "该调整请求已处理")
+
+    try:
+        risk = await evaluate_adjustment_text(
+            session,
+            payload.clinician_edited_instruction,
+        )
+    except RiskServiceUnavailable as exc:
+        raise ApiError(503, "DEPENDENCY_UNAVAILABLE", SERVICE_UNAVAILABLE_MESSAGE) from exc
+    if not risk.allowed:
+        raise ApiError(422, "RISK_BLOCKED", risk.patient_message)
+
+    controlled_options = build_controlled_options(
+        payload.clinician_edited_instruction
+    )
+    return AdjustmentRemapResponse(
+        clinician_edited_instruction=payload.clinician_edited_instruction,
+        suggested_controlled_instruction=controlled_options[0],
+        controlled_options=controlled_options,
+    )
+
+
+@router.post(
     "/adjustment-requests/{request_id}/review",
     response_model=DoctorAdjustmentResponse,
 )
@@ -382,16 +430,73 @@ async def review_adjustment(
         raise ApiError(409, "STATE_CONFLICT", "该调整请求已处理")
 
     controlled: str | None = None
+    clinician_edited = False
+    remap_rule_version: str | None = None
     if payload.decision == "approve_as_is":
         raw = decrypt_sensitive_text(request.submitted_text_encrypted, get_settings().secret_key)
+        try:
+            risk = await evaluate_adjustment_text(session, raw)
+        except RiskServiceUnavailable as exc:
+            raise ApiError(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                SERVICE_UNAVAILABLE_MESSAGE,
+            ) from exc
+        if not risk.allowed:
+            raise ApiError(422, "RISK_BLOCKED", risk.patient_message)
         controlled = build_controlled_instruction(raw)
+        remap_rule_version = risk.rule_version
         request.doctor_status = AdjustmentStatus.APPROVED_AS_IS
     elif payload.decision == "approve_edited":
-        raw = decrypt_sensitive_text(request.submitted_text_encrypted, get_settings().secret_key)
-        compatible_options = build_controlled_options(raw)
-        if payload.controlled_instruction not in compatible_options:
-            raise ApiError(422, "VALIDATION_ERROR", "请选择与患者本次建议方向一致的受控调整指令")
-        controlled = payload.controlled_instruction
+        if payload.clinician_edited_instruction:
+            try:
+                risk = await evaluate_adjustment_text(
+                    session,
+                    payload.clinician_edited_instruction,
+                )
+            except RiskServiceUnavailable as exc:
+                raise ApiError(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    SERVICE_UNAVAILABLE_MESSAGE,
+                ) from exc
+            if not risk.allowed:
+                raise ApiError(422, "RISK_BLOCKED", risk.patient_message)
+            controlled = build_controlled_instruction(
+                payload.clinician_edited_instruction
+            )
+            request.clinician_edited_text_encrypted = encrypt_sensitive_text(
+                payload.clinician_edited_instruction,
+                get_settings().secret_key,
+            )
+            clinician_edited = True
+            remap_rule_version = risk.rule_version
+        else:
+            # Backward compatibility for clients that still submit one of the
+            # server-provided controlled options directly.
+            raw = decrypt_sensitive_text(
+                request.submitted_text_encrypted,
+                get_settings().secret_key,
+            )
+            try:
+                risk = await evaluate_adjustment_text(session, raw)
+            except RiskServiceUnavailable as exc:
+                raise ApiError(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    SERVICE_UNAVAILABLE_MESSAGE,
+                ) from exc
+            if not risk.allowed:
+                raise ApiError(422, "RISK_BLOCKED", risk.patient_message)
+            compatible_options = build_controlled_options(raw)
+            if payload.controlled_instruction not in compatible_options:
+                raise ApiError(
+                    422,
+                    "VALIDATION_ERROR",
+                    "请先修改患者描述并重新映射为受控调整指令",
+                )
+            controlled = payload.controlled_instruction
+            remap_rule_version = risk.rule_version
         request.doctor_status = AdjustmentStatus.APPROVED_EDITED
     else:
         request.doctor_status = AdjustmentStatus.REJECTED
@@ -421,7 +526,12 @@ async def review_adjustment(
         case_id=request.case_id,
         session_id=request.session_id,
         action="adjustment.reviewed",
-        metadata={"decision": payload.decision, "sequence_no": request.sequence_no},
+        metadata={
+            "decision": payload.decision,
+            "sequence_no": request.sequence_no,
+            "clinician_text_edited": clinician_edited,
+            "remap_rule_version": remap_rule_version,
+        },
     )
     await session.commit()
     return doctor_adjustment_response(request)

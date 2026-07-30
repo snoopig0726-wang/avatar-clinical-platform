@@ -12,10 +12,10 @@
 
 ### 工程与架构
 
-- [`../PROJECT-MAP.md`](../PROJECT-MAP.md)：目标 V1 工程地图、目录职责和依赖边界。
+- [`../PROJECT-MAP.md`](../PROJECT-MAP.md)：当前工程地图、目录职责和依赖边界。
 - [`architecture/TECH.md`](architecture/TECH.md)：总体架构、技术栈、异步任务、适配器与部署方案。
 - [`architecture/API.md`](architecture/API.md)：REST API、认证、权限、状态、幂等和错误契约。
-- [`architecture/DATA.md`](architecture/DATA.md)：PostgreSQL 数据模型、版本快照、审计、加密与删除任务。
+- [`architecture/DATA.md`](architecture/DATA.md)：当前 SQLAlchemy 数据模型、版本快照、审计、加密与删除任务。
 
 ### 安全
 
@@ -24,13 +24,13 @@
 ### AI 映射与 Prompt
 
 - [`ai/voice-to-appearance-v1.md`](ai/voice-to-appearance-v1.md)：Q1-Q8 与医生确认结果到统一生图 Prompt 的规范。
-- [`ai/reference/feature_mapping_prompt.py`](ai/reference/feature_mapping_prompt.py)：Prompt Builder 参考代码，不作为完整业务流程或运行时代码直接导入。
+- [`ai/reference/feature_mapping_prompt.py`](ai/reference/feature_mapping_prompt.py)：对当前运行时 Prompt Builder 与确定性映射器的文档侧兼容引用，不包含第二套独立实现。
 
 ### 测试与验收
 
 - [`quality/TEST.md`](quality/TEST.md)：P0/P1/P2 测试矩阵、黑盒安全用例、证据要求和上线闸门。
 - [`quality/DEMO-ACCEPTANCE.md`](quality/DEMO-ACCEPTANCE.md)：当前演示范围、自动化证据、已知外部依赖和演示前检查清单。
-- [`quality/ONLINE-ACCEPTANCE.md`](quality/ONLINE-ACCEPTANCE.md)：Netlify 三角色完整线上业务验收结果、缺陷修复和复验方式。
+- [`quality/ONLINE-ACCEPTANCE.md`](quality/ONLINE-ACCEPTANCE.md)：GPT Image 2 当前线上状态、已知缺陷和完整复验方式。
 
 ### 决策记录
 

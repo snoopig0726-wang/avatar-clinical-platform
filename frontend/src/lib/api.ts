@@ -267,6 +267,13 @@ export type SubmitAdjustmentResponse = PatientAdjustment & {
 
 export type DoctorAdjustment = PatientAdjustment & {
   controlled_instruction: string | null
+  clinician_edited_instruction: string | null
+  suggested_controlled_instruction: string
+  controlled_options: string[]
+}
+
+export type AdjustmentRemapPreview = {
+  clinician_edited_instruction: string
   suggested_controlled_instruction: string
   controlled_options: string[]
 }
@@ -306,6 +313,7 @@ export type GenerationStatus =
 export type AvatarVersion = {
   version_id: string
   case_id: string
+  source_visual_feature_id: string | null
   generation_round: number
   generation_mode: GenerationMode
   generation_status: GenerationStatus

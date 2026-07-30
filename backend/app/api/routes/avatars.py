@@ -62,6 +62,7 @@ def avatar_response(
     return AvatarVersionResponse(
         version_id=version.version_id,
         case_id=version.case_id,
+        source_visual_feature_id=version.source_visual_feature_id,
         generation_round=version.generation_round,
         generation_mode=version.generation_mode,
         generation_status=version.generation_status,

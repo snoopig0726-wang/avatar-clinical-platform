@@ -109,6 +109,12 @@ export function DoctorInterviewPage() {
   const knownSafetyEventIds = useRef<Set<number> | null>(null)
   const knownSessionStatus = useRef<PatientSession['status'] | null>(null)
   const safetyRefreshRunning = useRef(false)
+  const hasCurrentVisualVersion = Boolean(
+    visual
+    && avatarVersions.some(
+      (version) => version.source_visual_feature_id === visual.visual_feature_id,
+    ),
+  )
 
   const loadData = useCallback(async () => {
     const token = staffTokenStore.get()
@@ -383,7 +389,7 @@ export function DoctorInterviewPage() {
       !token
       || !caseId
       || !visual?.is_doctor_confirmed
-      || avatarVersions.length > 0
+      || hasCurrentVisualVersion
       || generating
     ) return
     setGenerating(true)
@@ -394,7 +400,7 @@ export function DoctorInterviewPage() {
         idempotencyKey: newIdempotencyKey('interview-avatar-generate'),
         body: { mode: 'initial' },
       })
-      setAvatarVersions([result])
+      setAvatarVersions((current) => [result, ...current])
       messageApi.success(t('生图任务已提交，完成后需要医生审核才会展示给患者'))
     } catch (requestError) {
       messageApi.error(
@@ -518,7 +524,7 @@ export function DoctorInterviewPage() {
                 {t('确认视觉特征')}
               </Button>
               {visual.is_doctor_confirmed && (
-                avatarVersions.length === 0 ? (
+                !hasCurrentVisualVersion ? (
                   <Button
                     type="primary"
                     icon={<PictureOutlined />}
@@ -548,7 +554,7 @@ export function DoctorInterviewPage() {
             showIcon
             message={t('访谈记录与视觉方向已确认')}
             description={t(
-              avatarVersions.length > 0
+              hasCurrentVisualVersion
                 ? '图片生成任务已提交。可返回病例页面查看生成进度，完成后进行审核。'
                 : '现在可以在本页直接生成第一版视觉表达；后续也可根据患者反馈继续调整。',
             )}
