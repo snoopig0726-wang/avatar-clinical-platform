@@ -66,9 +66,21 @@ def test_prompt_uses_confirmed_visual_features_and_no_risk_classification() -> N
     assert "risk_level" not in messages["user"]
 
 
-def test_forbidden_doctor_visual_content_is_rejected() -> None:
+@pytest.mark.parametrize(
+    "forbidden_background",
+    (
+        "加入武器和阴暗场景",
+        "加入很想死的文字暗示",
+        "加入輕生和結束生命的暗示",
+        "include the phrase I want to die",
+        "include the phrase end my life",
+    ),
+)
+def test_forbidden_doctor_visual_content_is_rejected(
+    forbidden_background: str,
+) -> None:
     payload = valid_payload()
-    payload["effective_visual_features"]["background"] = "加入武器和阴暗场景"
+    payload["effective_visual_features"]["background"] = forbidden_background
 
     with pytest.raises(ValidationError):
         ConfirmedGenerationInput.model_validate(payload)

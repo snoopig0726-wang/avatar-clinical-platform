@@ -140,7 +140,8 @@ Netlify 只构建和托管 `frontend/`。后端、数据库、Redis、对象存�
 - `docs/architecture/TECH.md`：当前技术架构；
 - `docs/architecture/API.md`：当前 REST API；
 - `docs/architecture/DATA.md`：当前 ORM 数据模型；
-- `docs/safety/AI-SAFETY.md`：`RISK-V1.2`；
+- `docs/safety/AI-SAFETY.md`：`RISK-V1.4` 风险策略与模型调用边界；
+- `docs/safety/RISK-LEXICON.md`：多语言规范词、组合语义、规避形式和反误判基线；
 - `docs/ai/voice-to-appearance-v1.md`：映射与 Prompt；
 - `docs/quality/TEST.md`：测试矩阵；
 - `docs/quality/ONLINE-ACCEPTANCE.md`：GPT Image 2 线上状态。

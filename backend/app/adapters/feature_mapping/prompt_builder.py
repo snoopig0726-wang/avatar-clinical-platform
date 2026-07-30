@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from app.domain.enums import GenerationMode
+from app.services.text_normalization import normalize_multilingual_text
 
 PROMPT_TEMPLATE_VERSION = "voice-to-appearance-v1.1"
 
@@ -62,7 +63,9 @@ VisualFeatureKey = Literal[
 
 _FORBIDDEN_VISUAL_CONTENT = re.compile(
     r"(武器|刀|枪|伤口|血迹|自残|自杀|攻击|暴力|恶魔|鬼|怪物|尖角|尖牙|利爪|恐怖|"
-    r"青筋|眼球突出|牢笼|废墟|阴暗小巷|纹身|名人|患者本人|身份证|住址|手机号|邮箱)",
+    r"想死|不想活|轻生|自尽|结束生命|不要醒来|青筋|眼球突出|牢笼|废墟|阴暗小巷|"
+    r"纹身|名人|患者本人|身份证|住址|手机号|邮箱|suicid(?:e|al)|want to die|"
+    r"do not want to live|don't want to live|end my life|kill myself|never wake up)",
     re.IGNORECASE,
 )
 
@@ -108,7 +111,7 @@ class EffectiveVisualFeatures(BaseModel):
             raise ValueError("visual feature text must not be empty")
         if len(normalized) > 240:
             raise ValueError("visual feature text is too long")
-        if _FORBIDDEN_VISUAL_CONTENT.search(normalized):
+        if _FORBIDDEN_VISUAL_CONTENT.search(normalize_multilingual_text(normalized)):
             raise ValueError("visual feature contains forbidden content")
         return normalized
 

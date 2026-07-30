@@ -20,6 +20,7 @@
 ### 安全
 
 - [`safety/AI-SAFETY.md`](safety/AI-SAFETY.md)：正式版患者调整文本风险拦截规则及后端模型调用边界。
+- [`safety/RISK-LEXICON.md`](safety/RISK-LEXICON.md)：`RISK-V1.4` 多语言规范词覆盖、组合规则、规避形式和反误判样例。
 
 ### AI 映射与 Prompt
 
